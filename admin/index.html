@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fanvue Bot Admin</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f4f4f9; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        h1, h2, h3 { color: #333; }
+        label { display: block; margin-top: 10px; font-weight: bold; }
+        input, select { width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box; }
+        button { background: #007bff; color: white; border: none; padding: 10px 15px; margin-top: 15px; cursor: pointer; border-radius: 4px; }
+        button:hover { background: #0056b3; }
+        .slider-container { display: flex; align-items: center; gap: 10px; }
+        .hidden { display: none; }
+        .status { margin-top: 5px; font-size: 0.9em; color: green; }
+    </style>
+</head>
+<body>
+    <h1>Fanvue Bot Admin</h1>
+
+    <div id="login-panel" class="card">
+        <h2>Connection</h2>
+        <label>Supabase URL</label>
+        <input type="text" id="sb-url" placeholder="https://xyz.supabase.co">
+        <label>Supabase Service Key (Secret)</label>
+        <input type="password" id="sb-key" placeholder="eyJ...">
+        <button onclick="connectSupabase()">Connect</button>
+    </div>
+
+    <div id="dashboard" class="card hidden">
+        <h2>Creators</h2>
+        <div id="creators-list"></div>
+        
+        <h3>Add Creator</h3>
+        <input type="email" id="new-creator-email" placeholder="Email">
+        <button onclick="addCreator()">Add</button>
+
+        <hr>
+
+        <div id="creator-detail" class="hidden">
+            <h2 id="current-creator-email"></h2>
+            
+            <button onclick="startOAuth()" style="background: #e1306c;">Connect Fanvue (OAuth)</button>
+            
+            <h3>Persona Settings</h3>
+            <div id="settings-form">
+                <label>Arrogance (0-10)</label>
+                <input type="number" id="s-arrogance" min="0" max="10">
+                
+                <label>Dominance (0-10)</label>
+                <input type="number" id="s-dominance" min="0" max="10">
+                
+                <label>Lewdness (0-10)</label>
+                <input type="number" id="s-lewdness" min="0" max="10">
+                
+                <label>Reply Length</label>
+                <select id="s-reply_length">
+                    <option value="short">Short</option>
+                    <option value="medium">Medium</option>
+                    <option value="long">Long</option>
+                </select>
+                
+                <label>Active</label>
+                <input type="checkbox" id="s-active" style="width:auto;">
+                
+                <button onclick="saveSettings()">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let supabase;
+        let currentCreatorId;
+        
+        function connectSupabase() {
+            const url = document.getElementById('sb-url').value;
+            const key = document.getElementById('sb-key').value;
+            if(!url || !key) return alert("Missing credentials");
+            
+            supabase = window.supabase.createClient(url, key);
+            document.getElementById('login-panel').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+            loadCreators();
+        }
+
+        async function loadCreators() {
+            const { data, error } = await supabase.from('creators').select('*');
+            if(error) return alert(error.message);
+            
+            const list = document.getElementById('creators-list');
+            list.innerHTML = '';
+            data.forEach(c => {
+                const btn = document.createElement('div');
+                btn.style.padding = '10px';
+                btn.style.cursor = 'pointer';
+                btn.style.borderBottom = '1px solid #eee';
+                btn.innerText = ` ${c.email} (Active: ${c.is_active})`;
+                btn.onclick = () => selectCreator(c);
+                list.appendChild(btn);
+            });
+        }
+
+        async function addCreator() {
+            const email = document.getElementById('new-creator-email').value;
+            const { error } = await supabase.from('creators').insert({ email });
+            if(error) alert(error.message);
+            else {
+                document.getElementById('new-creator-email').value = '';
+                loadCreators();
+            }
+        }
+
+        function selectCreator(c) {
+            currentCreatorId = c.id;
+            document.getElementById('creator-detail').classList.remove('hidden');
+            document.getElementById('current-creator-email').innerText = c.email;
+            
+            // Fill Form
+            const s = c.settings || {};
+            document.getElementById('s-arrogance').value = s.arrogance || 0;
+            document.getElementById('s-dominance').value = s.dominance || 0;
+            document.getElementById('s-lewdness').value = s.lewdness || 0;
+            document.getElementById('s-reply_length').value = s.reply_length || 'medium';
+            document.getElementById('s-active').checked = c.is_active;
+        }
+
+        async function saveSettings() {
+            const settings = {
+                arrogance: parseInt(document.getElementById('s-arrogance').value),
+                dominance: parseInt(document.getElementById('s-dominance').value),
+                lewdness: parseInt(document.getElementById('s-lewdness').value),
+                reply_length: document.getElementById('s-reply_length').value
+            };
+            const isActive = document.getElementById('s-active').checked;
+            
+            const { error } = await supabase.from('creators').update({
+                settings,
+                is_active: isActive,
+                updated_at: new Date()
+            }).eq('id', currentCreatorId);
+            
+            if(error) alert('Error saving');
+            else alert('Saved!');
+        }
+
+        function startOAuth() {
+            if(!currentCreatorId) return;
+            // Assuming the function url is relative or we construct it.
+            // Best to ask the user to input the Function URL too?
+            // Or assume standard supabase project url structure if we have the SB URL.
+            // https://<project>.supabase.co -> https://<project>.functions.supabase.co
+            
+            const sbUrl = document.getElementById('sb-url').value;
+            let projectRef = sbUrl.split('//')[1].split('.')[0];
+            const functionsUrl = `https://${projectRef}.functions.supabase.co`;
+
+            window.location.href = `${functionsUrl}/oauth-connect?creatorId=${currentCreatorId}`;
+        }
+    </script>
+</body>
+</html>

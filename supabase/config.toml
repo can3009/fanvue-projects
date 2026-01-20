@@ -1,0 +1,34 @@
+# Supabase Functions Configuration
+# All function names must match folder names in supabase/functions/
+
+# ============================================
+# JWT Verification Settings
+# ============================================
+
+# Auth required (admin users)
+[functions.fanvue-oauth-start]
+verify_jwt = true
+
+[functions.fanvue-connection-health]
+verify_jwt = true
+
+[functions.fanvue-webhook-test]
+verify_jwt = true
+
+# No auth (external callbacks/webhooks)
+[functions.oauth-callback]
+verify_jwt = false
+
+[functions.fanvue-webhook]
+verify_jwt = false
+
+# Background workers (internal)
+[functions.jobs-worker]
+verify_jwt = false
+
+[functions.cron-tick]
+verify_jwt = false
+
+# Legacy (deprecated, kept for compatibility)
+[functions.oauth-connect]
+verify_jwt = false

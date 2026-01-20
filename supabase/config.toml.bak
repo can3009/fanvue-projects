@@ -1,0 +1,74 @@
+# Supabase Edge Functions Configuration
+
+   [functions.jobs-worker]
+   verify_jwt = false
+
+   [functions.fanvue-webhook]
+   verify_jwt = false
+
+   [functions.cron-tick]
+   verify_jwt = false
+
+   [functions.oauth-callback]
+   verify_jwt = false
+
+   [functions.oauth-connect]
+   verify_jwt = false
+```
+5. **Speichern** (Ctrl+S)
+
+---
+
+## **Was diese Datei macht:**
+
+Die `config.toml` sagt Supabase:
+
+> "Diese Functions brauchen **KEIN JWT** (kein Login-Token). Sie sollen **öffentlich** sein, damit:
+> - Fanvue Webhooks sie aufrufen kann (ohne Login)
+> - Der Cron-Job sie aufrufen kann (ohne Login)
+> - Du sie im Browser testen kannst (ohne Login)"
+
+**Ohne diese Datei:** 401 Unauthorized Error (wie vorhin)  
+**Mit dieser Datei:** Functions sind öffentlich zugänglich ✅
+
+---
+
+## 🎯 **Zusammenfassung - Was du tun musst:**
+
+### **1. `llmClient.ts` anpassen:**
+- ✅ Code von mir kopieren (siehe vorherige Nachricht)
+- ❌ KEINE Daten hardcoden
+- ✅ Alles bleibt mit `Deno.env.get(...)` 
+
+### **2. `config.toml` erstellen:**
+- ✅ Neue Datei: `supabase/config.toml`
+- ✅ Inhalt einfügen (siehe oben)
+- ✅ Speichern
+
+### **3. Secrets im Dashboard (hast du schon):**
+- ✅ `LLM_API_KEY` = dein Grok Key
+- ✅ `LLM_BASE_URL` = `https://api.x.ai/v1`
+- ✅ `LLM_MODEL` = `grok-2-latest`
+
+---
+
+## 📸 **Zur Kontrolle:**
+
+**Wenn du fertig bist, sollte dein VS Code Explorer so aussehen:**
+```
+📁 fanvue-projects
+├── 📁 .vscode
+│   └── 📄 settings.json
+├── 📁 admin
+├── 📁 supabase
+│   ├── 📄 config.toml        ← NEU! Das ist wichtig!
+│   ├── 📁 .temp
+│   └── 📁 functions
+│       ├── 📁 _shared
+│       │   ├── 📄 fanvueClient.ts
+│       │   ├── 📄 llmClient.ts        ← Angepasst mit Grok Code
+│       │   ├── 📄 supabaseClient.ts   ← Bleibt unverändert
+│       │   └── 📄 types.ts
+│       ├── 📁 fanvue-webhook
+│       ├── 📁 jobs-worker
+│       └── ...
