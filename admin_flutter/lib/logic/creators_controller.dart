@@ -150,6 +150,12 @@ class CreatorsController extends StateNotifier<CreatorsState> {
     }
     return _repository.buildOAuthUrl(selected.id, _supabaseUrl);
   }
+
+  Future<void> deleteCreator(Creator creator) async {
+    await _repository.deleteCreator(creator.id);
+    state = state.copyWith(selected: null);
+    await load();
+  }
 }
 
 final creatorsControllerProvider =

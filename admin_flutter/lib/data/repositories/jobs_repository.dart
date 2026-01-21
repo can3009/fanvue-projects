@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../models/creator.dart';
 import '../models/job.dart';
 import '../supabase_client_provider.dart';
 
@@ -12,10 +13,18 @@ class JobsRepository {
   Future<List<Job>> listJobs() async {
     final data = await _client
         .from('jobs_queue')
-        .select('*')
+        .select('*, creators!jobs_queue_creator_id_fkey(display_name)')
         .order('created_at', ascending: false)
         .limit(200);
     return (data as List).map((row) => Job.fromMap(row)).toList();
+  }
+
+  Future<List<Creator>> listCreators() async {
+    final data = await _client
+        .from('creators')
+        .select('*')
+        .order('display_name', ascending: true);
+    return (data as List).map((row) => Creator.fromMap(row)).toList();
   }
 
   Future<void> retryJob(String jobId) async {
@@ -38,8 +47,13 @@ class JobsRepository {
 
   /// Triggers the jobs-worker Edge Function to process the next queued job.
   /// Returns true if a job was processed, false if no jobs remain.
-  Future<bool> triggerWorker() async {
-    final response = await _client.functions.invoke('jobs-worker');
+  /// If creatorId is provided, only processes jobs for that creator.
+  Future<bool> triggerWorker({String? creatorId}) async {
+    final body = creatorId != null ? {'creatorId': creatorId} : null;
+    final response = await _client.functions.invoke(
+      'jobs-worker',
+      body: body,
+    );
     if (response.status != 200) {
       throw Exception('Worker failed: ${response.data}');
     }

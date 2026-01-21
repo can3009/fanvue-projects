@@ -87,9 +87,16 @@ class _JobTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final runAt = _formatDate(job.runAt);
+    final creatorLabel = job.creatorName ?? 'Unknown';
     return ListTile(
       title: Text('${job.type} • ${job.status}'),
-      subtitle: Text('Run at: $runAt'),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Creator: $creatorLabel'),
+          Text('Run at: $runAt'),
+        ],
+      ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [

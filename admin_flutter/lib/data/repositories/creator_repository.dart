@@ -146,6 +146,10 @@ class CreatorRepository {
       'https://$projectRef.functions.supabase.co/oauth-connect?creatorId=$creatorId',
     );
   }
+
+  Future<void> deleteCreator(String creatorId) async {
+    await _client.from('creators').delete().eq('id', creatorId);
+  }
 }
 
 final creatorRepositoryProvider = Provider<CreatorRepository>((ref) {

@@ -255,6 +255,9 @@ class CreatorsScreen extends ConsumerWidget {
                         fanvueClientId: clientId,
                         fanvueClientSecret: clientSecret,
                       ),
+                  onDelete: () => ref
+                      .read(creatorsControllerProvider.notifier)
+                      .deleteCreator(state.selected!),
                 ),
         ),
       ],
@@ -270,6 +273,7 @@ class _CreatorDetail extends StatefulWidget {
     required this.onSave,
     required this.onStartOAuth,
     required this.onUpdateIntegration,
+    required this.onDelete,
   });
 
   final Creator creator;
@@ -278,7 +282,8 @@ class _CreatorDetail extends StatefulWidget {
   final Future<void> Function(CreatorSettings settings, bool isActive) onSave;
   final VoidCallback onStartOAuth;
   final Future<void> Function(String clientId, String clientSecret)
-  onUpdateIntegration;
+      onUpdateIntegration;
+  final Future<void> Function() onDelete;
 
   @override
   State<_CreatorDetail> createState() => _CreatorDetailState();
@@ -513,6 +518,36 @@ class _CreatorDetailState extends State<_CreatorDetail>
             onPressed: widget.onStartOAuth,
             child: const Text('Connect OAuth'),
           ),
+        const SizedBox(width: 8),
+        IconButton(
+          onPressed: () async {
+            final confirmed = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Creator löschen?'),
+                content: Text(
+                  'Möchtest du "${widget.creator.displayName}" wirklich löschen?\n\nAlle zugehörigen Daten (Fans, Nachrichten, Jobs) werden unwiderruflich gelöscht.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Abbrechen'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    style: TextButton.styleFrom(foregroundColor: Colors.red),
+                    child: const Text('Löschen'),
+                  ),
+                ],
+              ),
+            );
+            if (confirmed == true) {
+              await widget.onDelete();
+            }
+          },
+          icon: const Icon(Icons.delete_outline, color: Colors.red),
+          tooltip: 'Creator löschen',
+        ),
       ],
       child: Column(
         children: [
