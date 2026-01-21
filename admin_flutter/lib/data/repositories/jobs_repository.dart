@@ -19,18 +19,37 @@ class JobsRepository {
   }
 
   Future<void> retryJob(String jobId) async {
-    await _client.from('jobs_queue').update({
-      'status': 'queued',
-      'last_error': null,
-      'run_at': DateTime.now().toIso8601String(),
-    }).eq('id', jobId);
+    await _client
+        .from('jobs_queue')
+        .update({
+          'status': 'queued',
+          'last_error': null,
+          'run_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', jobId);
   }
 
   Future<void> cancelJob(String jobId) async {
-    await _client.from('jobs_queue').update({
-      'status': 'failed',
-      'last_error': 'Cancelled by admin',
-    }).eq('id', jobId);
+    await _client
+        .from('jobs_queue')
+        .update({'status': 'failed', 'last_error': 'Cancelled by admin'})
+        .eq('id', jobId);
+  }
+
+  /// Triggers the jobs-worker Edge Function to process the next queued job.
+  /// Returns true if a job was processed, false if no jobs remain.
+  Future<bool> triggerWorker() async {
+    final response = await _client.functions.invoke('jobs-worker');
+    if (response.status != 200) {
+      throw Exception('Worker failed: ${response.data}');
+    }
+    final data = response.data as Map<String, dynamic>?;
+    // If the worker returns a jobId, a job was processed
+    if (data != null && data['jobId'] != null) {
+      return true;
+    }
+    // If the worker says "No jobs to process", we're done
+    return false;
   }
 }
 

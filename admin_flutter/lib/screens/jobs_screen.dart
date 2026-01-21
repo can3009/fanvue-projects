@@ -11,29 +11,50 @@ class JobsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final jobsState = ref.watch(jobsControllerProvider);
-    return jobsState.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => Center(child: Text(error.toString())),
-      data: (jobs) {
-        return SectionCard(
-          title: 'Jobs queue',
-          actions: [
-            IconButton(
-              onPressed: () =>
-                  ref.read(jobsControllerProvider.notifier).load(),
-              icon: const Icon(Icons.refresh),
-            ),
-          ],
-          child: jobs.isEmpty
-              ? const Text('No jobs found.')
-              : SizedBox(
-                  height: MediaQuery.of(context).size.height - 220,
-                  child: ListView.separated(
-                    itemCount: jobs.length,
+    final state = ref.watch(jobsControllerProvider);
+
+    if (state.loading && state.jobs.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (state.error != null && state.jobs.isEmpty) {
+      return Center(child: Text(state.error!));
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: SectionCard(
+            title: 'Jobs queue',
+            expand: true,
+            actions: [
+              // Process Queue Button
+              state.processing
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : IconButton(
+                      onPressed: () => ref
+                          .read(jobsControllerProvider.notifier)
+                          .processQueue(),
+                      icon: const Icon(Icons.play_arrow),
+                      tooltip: 'Process all queued jobs',
+                    ),
+              IconButton(
+                onPressed: () =>
+                    ref.read(jobsControllerProvider.notifier).load(),
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
+            child: state.jobs.isEmpty
+                ? const Text('No jobs found.')
+                : ListView.separated(
+                    itemCount: state.jobs.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
-                      final job = jobs[index];
+                      final job = state.jobs[index];
                       return _JobTile(
                         job: job,
                         onRetry: () => ref
@@ -45,9 +66,9 @@ class JobsScreen extends ConsumerWidget {
                       );
                     },
                   ),
-                ),
-        );
-      },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -72,14 +93,8 @@ class _JobTile extends StatelessWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          TextButton(
-            onPressed: onRetry,
-            child: const Text('Retry'),
-          ),
-          TextButton(
-            onPressed: onCancel,
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+          TextButton(onPressed: onCancel, child: const Text('Cancel')),
         ],
       ),
     );

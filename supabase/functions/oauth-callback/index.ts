@@ -206,28 +206,86 @@ serve(async (req) => {
 });
 
 function redirectToApp(
-    appBaseUrl: string,
+    _appBaseUrl: string,
     status: "success" | "error",
     errorMessage: string | null,
     creatorId?: string
 ): Response {
-    const redirectUrl = new URL(`${appBaseUrl}/onboarding/callback`);
-    redirectUrl.searchParams.set("status", status);
+    // Instead of redirecting to a non-existent localhost app,
+    // we show an inline HTML page with the result
+    const isSuccess = status === "success";
 
-    if (errorMessage) {
-        redirectUrl.searchParams.set("error", errorMessage);
-    }
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth ${isSuccess ? 'Success' : 'Error'}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+        }
+        .card {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            max-width: 400px;
+        }
+        .icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        p {
+            color: rgba(255,255,255,0.7);
+            margin-bottom: 20px;
+        }
+        .success { color: #00ff88; }
+        .error { color: #ff6b6b; }
+        .info {
+            background: rgba(255,255,255,0.1);
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+        }
+        .close-hint {
+            margin-top: 30px;
+            font-size: 14px;
+            color: rgba(255,255,255,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">${isSuccess ? '✅' : '❌'}</div>
+        <h1 class="${status}">${isSuccess ? 'OAuth Connected!' : 'OAuth Failed'}</h1>
+        <p>${isSuccess
+            ? 'Your Fanvue account has been connected successfully.'
+            : (errorMessage || 'An unknown error occurred.')}</p>
+        ${creatorId ? `<div class="info">Creator ID: ${creatorId}</div>` : ''}
+        <p class="close-hint">You can close this window and return to the app.</p>
+    </div>
+</body>
+</html>`;
 
-    if (creatorId) {
-        redirectUrl.searchParams.set("creatorId", creatorId);
-    }
-
-    console.log("🔀 Redirecting to:", redirectUrl.toString());
-
-    return new Response(null, {
-        status: 302,
+    return new Response(html, {
+        status: 200,
         headers: {
-            Location: redirectUrl.toString(),
+            "Content-Type": "text/html; charset=utf-8",
         },
     });
 }

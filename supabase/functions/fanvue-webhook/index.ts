@@ -9,7 +9,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
  * Purpose: Handle Fanvue webhooks for all creators
  * Auth: Verify JWT OFF (Fanvue server has no JWT)
  * 
- * Routing: Query param ?creatorId=<uuid> is REQUIRED
+ * Creator Detection (in order):
+ * 1. ?creatorId=<uuid> in URL (optional, backwards compatible)
+ * 2. recipientUuid from webhook payload → lookup via fanvue_creator_id in creators table
+ * 3. Webhook signature matching against all stored webhook secrets
+ * 
  * Signature: Uses per-creator webhook secret from creator_integrations
  * 
  * Fanvue Signature Format:
@@ -157,30 +161,112 @@ serve(async (req) => {
         );
     }
 
-    // 1. Extract creatorId from URL (REQUIRED)
-    const url = new URL(req.url);
-    const creatorId = url.searchParams.get("creatorId");
-
-    if (!creatorId) {
-        console.error("❌ Missing creatorId query parameter");
-        return new Response(
-            JSON.stringify({ error: "Missing creatorId query parameter" }),
-            { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-        );
-    }
-
-    if (!isValidUUID(creatorId)) {
-        console.error("❌ Invalid creatorId format:", creatorId);
-        return new Response(
-            JSON.stringify({ error: "Invalid creatorId format (must be UUID)" }),
-            { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-        );
-    }
-
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     try {
         const rawBody = await req.text();
+
+        // Parse payload first to potentially extract creator info
+        let payload: WebhookPayload;
+        try {
+            payload = JSON.parse(rawBody);
+        } catch {
+            console.error("❌ Invalid JSON payload");
+            return new Response(
+                JSON.stringify({ error: "Invalid JSON payload" }),
+                { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+            );
+        }
+
+        console.log("📦 Raw payload (first 500 chars):", rawBody.substring(0, 500));
+
+        // 1. Determine creatorId - try URL param first, then extract from payload
+        const url = new URL(req.url);
+        let creatorId = url.searchParams.get("creatorId");
+
+        if (!creatorId) {
+            // Try to find creator from payload
+            // Fanvue sends recipientUuid which is the creator's Fanvue ID
+            const fanvueCreatorId = payload.recipientUuid ||
+                payload.recipient?.uuid ||
+                payload.creatorUuid ||
+                payload.creator?.uuid;
+
+            if (fanvueCreatorId) {
+                console.log("🔍 Looking up creator by Fanvue ID:", fanvueCreatorId);
+
+                // Look up creator by fanvue_creator_id
+                const { data: creator, error: creatorError } = await supabase
+                    .from("creators")
+                    .select("id")
+                    .eq("fanvue_creator_id", String(fanvueCreatorId))
+                    .maybeSingle();
+
+                if (creatorError) {
+                    console.error("❌ Creator lookup error:", creatorError);
+                }
+
+                if (creator) {
+                    creatorId = creator.id;
+                    console.log("✅ Found creator by Fanvue ID:", creatorId);
+                }
+            }
+        }
+
+        // Still no creatorId? Try to match by webhook secret (signature validation will find the right one)
+        if (!creatorId) {
+            console.log("🔍 No creator ID found, trying to match by webhook signature...");
+
+            const signatureHeader = req.headers.get("x-fanvue-signature") ||
+                req.headers.get("X-Fanvue-Signature") || "";
+
+            if (signatureHeader) {
+                // Get all integrations and try each one's webhook secret
+                const { data: integrations } = await supabase
+                    .from("creator_integrations")
+                    .select("creator_id, fanvue_webhook_secret")
+                    .eq("integration_type", "fanvue")
+                    .not("fanvue_webhook_secret", "is", null);
+
+                if (integrations) {
+                    for (const integration of integrations) {
+                        if (!integration.fanvue_webhook_secret) continue;
+
+                        const verification = await verifyFanvueSignature(
+                            rawBody,
+                            signatureHeader,
+                            integration.fanvue_webhook_secret
+                        );
+
+                        if (verification.valid) {
+                            creatorId = integration.creator_id;
+                            console.log("✅ Found creator by webhook signature match:", creatorId);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!creatorId) {
+            console.error("❌ Could not determine creator - no URL param and no match in payload/signature");
+            return new Response(
+                JSON.stringify({
+                    error: "Could not determine creator",
+                    hint: "Add ?creatorId=UUID to URL or ensure fanvue_creator_id is set in DB",
+                    payload_keys: Object.keys(payload)
+                }),
+                { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+            );
+        }
+
+        if (!isValidUUID(creatorId)) {
+            console.error("❌ Invalid creatorId format:", creatorId);
+            return new Response(
+                JSON.stringify({ error: "Invalid creatorId format (must be UUID)" }),
+                { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+            );
+        }
 
         // 2. Get per-creator webhook secret from DB
         const { data: integration, error: integrationError } = await supabase
@@ -227,19 +313,7 @@ serve(async (req) => {
 
         console.log("✅ Webhook signature verified for creator:", creatorId);
 
-        // 4. Parse payload
-        let payload: WebhookPayload;
-        try {
-            payload = JSON.parse(rawBody);
-        } catch {
-            console.error("❌ Invalid JSON payload");
-            return new Response(
-                JSON.stringify({ error: "Invalid JSON payload" }),
-                { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-            );
-        }
-
-        console.log("📦 Raw payload:", rawBody.substring(0, 500));
+        // 4. Payload already parsed earlier - just log event info
         console.log("📨 Webhook event:", payload.event, "for creator:", creatorId);
         console.log("📋 Payload keys:", Object.keys(payload));
 
@@ -280,9 +354,15 @@ serve(async (req) => {
             const fanvueFanId = String(senderData.uuid || senderData.id || payload.senderUuid || "");
             const messageContent = String(messageData.text || messageData.content || "");
             const messageId = String(payload.messageUuid || messageData.uuid || messageData.id || "");
-            const senderUsername = String(senderData.handle || senderData.displayName || senderData.username || senderData.name || "unknown");
 
-            console.log("📩 Message from:", senderUsername, "content:", messageContent.substring(0, 50));
+            // Extract both name fields from Fanvue
+            const senderHandle = String(senderData.handle || senderData.username || "");
+            const senderDisplayName = String(senderData.displayName || senderData.name || "");
+            // Fallback: use one if the other is empty
+            const finalUsername = senderHandle || senderDisplayName || "unknown";
+            const finalDisplayName = senderDisplayName || senderHandle || "Unknown";
+
+            console.log("📩 Message from:", finalUsername, "(", finalDisplayName, ") content:", messageContent.substring(0, 50));
 
             if (!fanvueFanId) {
                 console.warn("⚠️ No fan ID in message event - sender:", JSON.stringify(senderData));
@@ -292,14 +372,15 @@ serve(async (req) => {
                 );
             }
 
-            // Upsert Fan
+            // Upsert Fan with both username and display_name
             const { data: fan, error: fanError } = await supabase
                 .from("fans")
                 .upsert(
                     {
                         creator_id: creatorId,
                         fanvue_fan_id: fanvueFanId,
-                        username: senderUsername,
+                        username: finalUsername,
+                        display_name: finalDisplayName,
                     },
                     { onConflict: "creator_id,fanvue_fan_id" }
                 )
@@ -364,7 +445,8 @@ serve(async (req) => {
                 payload: {
                     message_id: messageId,
                     fan_message: messageContent,
-                    fan_username: senderUsername,
+                    fan_username: finalUsername,
+                    fan_display_name: finalDisplayName,
                     fanvue_fan_id: fanvueFanId,
                 },
             });
@@ -387,11 +469,12 @@ serve(async (req) => {
         }
 
         // 7. Handle Transaction Events
-        if (event === "transaction.created" || event === "transaction.completed" || event === "transaction") {
-            const fanvueFanId = String(data.userId || data.fan_id || data.senderId || "");
-            const transactionId = String(data.id || data.transactionId || "");
-            const amount = Number(data.amount) || 0;
-            const transactionType = String(data.type || "tip");
+        if (eventType === "transaction.created" || eventType === "transaction.completed" || eventType === "transaction" || hasTransaction) {
+            const txData = payload.transaction || payload.data || payload;
+            const fanvueFanId = String(txData.userId || txData.fan_id || txData.senderId || payload.senderUuid || "");
+            const transactionId = String(txData.id || txData.transactionId || "");
+            const amount = Number(txData.amount) || 0;
+            const transactionType = String(txData.type || "tip");
 
             if (!fanvueFanId) {
                 return new Response(
@@ -422,7 +505,7 @@ serve(async (req) => {
                     fanvue_transaction_id: transactionId,
                     amount: amount,
                     type: transactionType,
-                    created_at: String(data.timestamp || data.created_at || new Date().toISOString()),
+                    created_at: String(txData.timestamp || txData.created_at || new Date().toISOString()),
                 });
 
                 console.log("✅ Transaction saved:", transactionId);
@@ -447,7 +530,7 @@ serve(async (req) => {
         }
 
         // 8. Handle Test Event (from Fanvue UI)
-        if (event === "test" || event === "webhook.test") {
+        if (eventType === "test" || eventType === "webhook.test") {
             console.log("✅ Test webhook received");
             return new Response(
                 JSON.stringify({ received: true, event: "test", creator_id: creatorId }),
@@ -456,24 +539,14 @@ serve(async (req) => {
         }
 
         // 9. Unknown event - still return 200 to avoid retries
-        console.warn("⚠️ Unknown webhook event:", event);
+        console.warn("⚠️ Unknown webhook event:", eventType);
         return new Response(
-            JSON.stringify({ received: true, event: "unknown", eventType: event }),
+            JSON.stringify({ received: true, event: "unknown", eventType: eventType }),
             { status: 200, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
         );
 
     } catch (error) {
         console.error("❌ Webhook Error:", error);
-
-        // Update integration with error
-        await supabase
-            .from("creator_integrations")
-            .update({
-                last_webhook_error: String(error),
-                updated_at: new Date().toISOString(),
-            })
-            .eq("creator_id", creatorId)
-            .eq("integration_type", "fanvue");
 
         // Return 200 to prevent Fanvue retries
         return new Response(

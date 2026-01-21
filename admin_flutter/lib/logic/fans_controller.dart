@@ -84,7 +84,8 @@ class FansController extends StateNotifier<FansState> {
 
   Future<void> loadFans(Creator creator) async {
     final fans = await _repository.listFans(creator.id);
-    final selectedFan = state.selectedFan ?? (fans.isNotEmpty ? fans.first : null);
+    // Reset selectedFan when switching creators - the old fan doesn't belong to the new creator
+    final selectedFan = fans.isNotEmpty ? fans.first : null;
     state = state.copyWith(
       selectedCreator: creator,
       fans: fans,
@@ -116,6 +117,14 @@ class FansController extends StateNotifier<FansState> {
       message: message,
     );
     await loadMessages(fan);
+  }
+
+  Future<void> deleteFan(Fan fan) async {
+    final creator = state.selectedCreator;
+    if (creator == null) return;
+    await _repository.deleteFan(fan.id);
+    // Reload fans list after deletion
+    await loadFans(creator);
   }
 }
 

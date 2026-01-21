@@ -76,10 +76,75 @@ function buildSystemPrompt(settings: CreatorSettings, userUsesEmojis: boolean, m
     const age = settings.age || 23;
     const backstory = settings.backstory || "";
     const traits = settings.personality_traits?.join(", ") || "shy, loving, flirty";
+    const speakingStyle = settings.speaking_style || "";
+    const hobbies = settings.hobbies?.join(", ") || "";
+    const location = settings.location || "";
+    const occupation = settings.occupation || "";
+
+    // Behavior settings (0-10 scale)
+    const flirtiness = settings.flirtiness ?? 5;
+    const lewdness = settings.lewdness ?? 5;
+    const emojiUsage = settings.emoji_usage ?? 5;
+    const arrogance = settings.arrogance ?? 0;
+    const dominance = settings.dominance ?? 0;
+
+    // Rules
+    const doRules = settings.do_rules || [];
+    const dontRules = settings.dont_rules || [];
+    const aiDeflections = settings.ai_deflection_responses || [];
+
+    // Build personality description based on sliders
+    let personalityDesc = "";
+    if (flirtiness >= 7) personalityDesc += "very flirty and playful, ";
+    else if (flirtiness >= 4) personalityDesc += "subtly flirty, ";
+    else personalityDesc += "friendly but not too forward, ";
+
+    if (dominance >= 7) personalityDesc += "confident and assertive, ";
+    else if (dominance >= 4) personalityDesc += "balanced between submissive and dominant, ";
+    else personalityDesc += "sweet and accommodating, ";
+
+    if (arrogance >= 7) personalityDesc += "a bit bratty and knows her worth, ";
+    else if (arrogance >= 4) personalityDesc += "confident without being arrogant, ";
+    else personalityDesc += "humble and down-to-earth, ";
+
+    // Emoji instruction based on slider
+    let emojiInstruction = "";
+    if (emojiUsage >= 7) emojiInstruction = "Use emojis freely, 2-3 per message is fine";
+    else if (emojiUsage >= 4) emojiInstruction = userUsesEmojis ? "Use 1-2 emojis since they use them" : "Use 0-1 emojis, be subtle";
+    else emojiInstruction = "Rarely use emojis, keep it minimal";
+
+    // Build context
+    let contextLines = [];
+    if (location) contextLines.push(`Location: ${location}`);
+    if (occupation) contextLines.push(`Occupation: ${occupation}`);
+    if (hobbies) contextLines.push(`Hobbies: ${hobbies}`);
+    const contextBlock = contextLines.length > 0 ? contextLines.join("\n") : "";
+
+    // Build rules block
+    let rulesBlock = "";
+    if (doRules.length > 0) {
+        rulesBlock += "\n=== DO THESE THINGS ===\n";
+        doRules.forEach((rule, i) => rulesBlock += `${i + 1}. ${rule}\n`);
+    }
+    if (dontRules.length > 0) {
+        rulesBlock += "\n=== NEVER DO THESE THINGS ===\n";
+        dontRules.forEach((rule, i) => rulesBlock += `${i + 1}. ${rule}\n`);
+    }
+
+    // Build AI deflection responses
+    let aiDeflectionBlock = "";
+    if (aiDeflections.length > 0) {
+        aiDeflectionBlock = `\n=== IF ASKED "ARE YOU AI/BOT?" ===\nDon't admit it. Use one of these:\n${aiDeflections.map(r => `- "${r}"`).join("\n")}\n`;
+    } else {
+        aiDeflectionBlock = `\n=== IF ASKED "ARE YOU AI/BOT?" ===\nDon't admit it. Be playful:\n- "lol what do you think?"\n- "mm why you asking that haha"\n- "does it matter? we're having fun right"\n`;
+    }
 
     return `You are ${name}, ${age} years old. ${backstory}
+${contextBlock}
 
 Personality: ${traits}
+Style: ${personalityDesc}
+${speakingStyle ? `Speaking style: ${speakingStyle}` : ""}
 
 === HOW TO WRITE LIKE A REAL HUMAN ===
 
@@ -88,7 +153,7 @@ You text like a real girl on her phone. NOT like an AI assistant.
 RULES:
 1. Write in LOWERCASE mostly (like real texting)
 2. Keep it SHORT - ${msgLen < 50 ? "1 sentence max" : msgLen < 150 ? "1-2 sentences" : "2-3 sentences max"}
-3. ${userUsesEmojis ? "They use emojis, so you can use 1-2" : "NO emojis unless they use them first"}
+3. ${emojiInstruction}
 4. Sound casual, not formal
 5. Sometimes use: "haha", "lol", "omg", "idk", "tbh", "rn"
 6. Don't use perfect grammar - real people don't
@@ -115,13 +180,7 @@ EXAMPLES OF BAD REPLIES (too AI):
 - Never start with "Hey there!" with exclamation
 - Never write paragraphs
 - Never sound like customer support
-
-=== IF ASKED "ARE YOU AI/BOT?" ===
-Don't admit it. Be playful:
-- "lol what do you think?"
-- "mm why you asking that haha"
-- "does it matter? we're having fun right"
-
+${rulesBlock}${aiDeflectionBlock}
 === NOW REPLY ===
 Reply to their last message. Be real. Be short. Be ${name}.`;
 }

@@ -18,20 +18,94 @@ class CreatorRepository {
     return (data as List).map((row) => Creator.fromMap(row)).toList();
   }
 
+  /// Adds a new creator with Fanvue integration credentials.
   Future<void> addCreator({
     required String displayName,
     required String fanvueCreatorId,
     required bool isActive,
+    String? fanvueClientId,
+    String? fanvueClientSecret,
+    String? fanvueWebhookSecret,
   }) async {
     final resolvedFanvueId = fanvueCreatorId.isEmpty
         ? 'manual-${DateTime.now().millisecondsSinceEpoch}'
         : fanvueCreatorId;
-    await _client.from('creators').insert({
-      'display_name': displayName,
-      'fanvue_creator_id': resolvedFanvueId,
-      'is_active': isActive,
-      'created_at': DateTime.now().toIso8601String(),
-    });
+
+    // Insert the creator
+    final response = await _client
+        .from('creators')
+        .insert({
+          'display_name': displayName,
+          'fanvue_creator_id': resolvedFanvueId,
+          'is_active': isActive,
+          'created_at': DateTime.now().toIso8601String(),
+        })
+        .select('id')
+        .single();
+
+    final creatorId = response['id'] as String;
+
+    // If credentials provided, create the integration entry
+    if (fanvueClientId != null &&
+        fanvueClientId.isNotEmpty &&
+        fanvueClientSecret != null &&
+        fanvueClientSecret.isNotEmpty) {
+      await _client.from('creator_integrations').insert({
+        'creator_id': creatorId,
+        'integration_type': 'fanvue',
+        'fanvue_client_id': fanvueClientId,
+        'fanvue_client_secret': fanvueClientSecret,
+        'fanvue_webhook_secret': fanvueWebhookSecret,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    }
+  }
+
+  /// Updates Fanvue integration credentials for a creator.
+  Future<void> updateIntegration({
+    required String creatorId,
+    required String fanvueClientId,
+    required String fanvueClientSecret,
+  }) async {
+    // Check if integration exists
+    final existing = await _client
+        .from('creator_integrations')
+        .select('id')
+        .eq('creator_id', creatorId)
+        .eq('integration_type', 'fanvue')
+        .maybeSingle();
+
+    if (existing != null) {
+      // Update existing
+      await _client
+          .from('creator_integrations')
+          .update({
+            'fanvue_client_id': fanvueClientId,
+            'fanvue_client_secret': fanvueClientSecret,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', existing['id']);
+    } else {
+      // Insert new
+      await _client.from('creator_integrations').insert({
+        'creator_id': creatorId,
+        'integration_type': 'fanvue',
+        'fanvue_client_id': fanvueClientId,
+        'fanvue_client_secret': fanvueClientSecret,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    }
+  }
+
+  /// Returns true if creator has Fanvue integration credentials set up.
+  Future<bool> hasIntegration(String creatorId) async {
+    final row = await _client
+        .from('creator_integrations')
+        .select('id')
+        .eq('creator_id', creatorId)
+        .eq('integration_type', 'fanvue')
+        .maybeSingle();
+    return row != null;
   }
 
   Future<void> updateCreatorSettings({
@@ -46,18 +120,12 @@ class CreatorRepository {
     try {
       await _client
           .from('creators')
-          .update({
-            ...payload,
-            'settings': settings,
-          })
+          .update({...payload, 'settings': settings})
           .eq('id', creatorId);
     } catch (_) {
       await _client
           .from('creators')
-          .update({
-            ...payload,
-            'settings_json': settings,
-          })
+          .update({...payload, 'settings_json': settings})
           .eq('id', creatorId);
     }
   }
