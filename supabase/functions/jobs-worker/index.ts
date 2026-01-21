@@ -256,8 +256,12 @@ serve(async (req) => {
 
             console.log(`📝 Conversation history: ${history.length} messages`);
 
+            // Get fan stage from payload (set by webhook)
+            const fanStage = job.payload?.fan_stage || 'new';
+            console.log(`🎭 Fan stage: ${fanStage}`);
+
             const settings = (creator.settings_json || {}) as CreatorSettings;
-            const replyContent = await generateReply(history, settings);
+            const replyContent = await generateReply(history, settings, undefined, fanStage);
             console.log(`🤖 Generated reply: ${replyContent.substring(0, 80)}...`);
 
             // Fanvue fan id
@@ -293,6 +297,39 @@ serve(async (req) => {
                 },
                 { onConflict: "creator_id,fan_id" },
             );
+
+            // === CHECK: Did new messages arrive during processing? ===
+            // If last_message_at on the job is newer than when we started, create a new job
+            const jobLastMessageAt = job.payload?.last_message_at || job.last_message_at;
+            if (jobLastMessageAt) {
+                const { data: newerMessages } = await supabase
+                    .from("messages")
+                    .select("id")
+                    .eq("creator_id", creator_id)
+                    .eq("fan_id", fan_id)
+                    .eq("direction", "inbound")
+                    .gt("created_at", jobLastMessageAt)
+                    .limit(1);
+
+                if (newerMessages && newerMessages.length > 0) {
+                    console.log("📨 New messages arrived during processing - creating follow-up job");
+                    // Create a new queued job for the new messages
+                    const newDelay = 30 + Math.random() * 50; // 30-80 seconds
+                    await supabase.from("jobs_queue").insert({
+                        creator_id,
+                        fan_id,
+                        job_type: "reply",
+                        status: "queued",
+                        run_at: new Date(Date.now() + newDelay * 1000).toISOString(),
+                        last_message_at: new Date().toISOString(),
+                        pending_count: 0,
+                        payload: {
+                            fan_stage: job.payload?.fan_stage || 'new',
+                            fanvue_fan_id: fanData.fanvue_fan_id,
+                        },
+                    });
+                }
+            }
         } else if (job.job_type === "followup") {
             const creator_id = job.creator_id;
             const fan_id = job.fan_id;

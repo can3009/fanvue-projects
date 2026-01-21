@@ -53,6 +53,20 @@ export interface Fan {
   fanvue_id: string;
   username: string;
   display_name: string;
+  // Human-like behavior fields
+  pacing_config?: PacingConfig;
+  stage?: FanStage;
+  msg_count_inbound?: number;
+  total_spend?: number;
+  tags?: string[];
+}
+
+export type FanStage = 'new' | 'warmup' | 'flirty' | 'sales' | 'post_purchase' | 'vip';
+
+export interface PacingConfig {
+  base_delay: number;      // Average seconds to wait (30-80)
+  variance: number;        // Random +/- deviation
+  long_pause_chance: number; // Chance of 5-min break (0-1)
 }
 
 export interface Job {

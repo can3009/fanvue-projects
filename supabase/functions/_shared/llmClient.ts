@@ -1,14 +1,61 @@
-import { CreatorSettings } from "./types.ts";
+import { CreatorSettings, FanStage } from "./types.ts";
 
 export interface ChatMessage {
     role: 'system' | 'user' | 'assistant';
     content: string;
 }
 
+// Stage-specific conversation strategies
+const STAGE_INSTRUCTIONS: Record<FanStage, string> = {
+    new: `=== STAGE: NEW FAN ===
+This is a NEW fan (less than 5 messages). Focus on:
+- Building trust and rapport
+- Ask open-ended questions to learn about them
+- Be warm and welcoming, but not too forward
+- Don't push sales yet - just be friendly`,
+
+    warmup: `=== STAGE: WARMUP ===
+You've been chatting a bit (5-20 messages). Focus on:
+- Getting to know them better
+- Start showing more personality
+- Light flirting is okay now
+- Ask about their interests/day`,
+
+    flirty: `=== STAGE: FLIRTY ===
+You have good rapport now (20+ messages). Focus on:
+- Be more playful and teasing
+- Increase the flirtiness
+- Start hinting at exclusive content
+- Build anticipation`,
+
+    sales: `=== STAGE: SALES READY ===
+High engagement - they're interested! Focus on:
+- Tease your exclusive content
+- Mention what they're missing out on
+- Be persuasive but not pushy
+- Create urgency ("thinking about posting something special...")`,
+
+    post_purchase: `=== STAGE: POST PURCHASE ===
+They've bought something! Focus on:
+- Thank them genuinely
+- Make them feel special/valued
+- Tease upcoming content
+- Encourage repeat purchases subtly`,
+
+    vip: `=== STAGE: VIP FAN ===
+This is a VIP ($100+ spent). Focus on:
+- Treat them like royalty
+- Exclusive attention and responses
+- Personalized messages
+- Early access hints
+- Make them feel like your #1`,
+};
+
 export const generateReply = async (
     history: ChatMessage[],
     settings: CreatorSettings,
-    context?: string
+    context?: string,
+    fanStage?: FanStage
 ): Promise<string> => {
     const baseUrl = Deno.env.get("LLM_BASE_URL") || "https://api.x.ai/v1";
     const apiKey = Deno.env.get("LLM_API_KEY");
@@ -22,9 +69,10 @@ export const generateReply = async (
     const userUsesEmojis = /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u.test(lastMessageText);
     const lastMessageLength = lastMessageText.length;
 
-    const systemPrompt = buildSystemPrompt(settings, userUsesEmojis, lastMessageLength);
+    const systemPrompt = buildSystemPrompt(settings, userUsesEmojis, lastMessageLength, fanStage);
     console.log("🛠️ System Prompt (first 200 chars):", systemPrompt.substring(0, 200));
     console.log("🛠️ Settings used:", JSON.stringify(settings));
+    if (fanStage) console.log("🎭 Fan stage:", fanStage);
 
     const messages = [
         { role: 'system', content: systemPrompt },
@@ -67,7 +115,7 @@ export const generateReply = async (
     return reply;
 };
 
-function buildSystemPrompt(settings: CreatorSettings, userUsesEmojis: boolean, msgLen: number): string {
+function buildSystemPrompt(settings: CreatorSettings, userUsesEmojis: boolean, msgLen: number, fanStage?: FanStage): string {
     const name = settings.name || "Elara";
     const age = settings.age || 23;
     const backstory = settings.backstory || "";
@@ -135,6 +183,9 @@ function buildSystemPrompt(settings: CreatorSettings, userUsesEmojis: boolean, m
         aiDeflectionBlock = `\n=== IF ASKED "ARE YOU AI/BOT?" ===\nDon't admit it. Be playful:\n- "lol what do you think?"\n- "mm why you asking that haha"\n- "does it matter? we're having fun right"\n`;
     }
 
+    // Stage-specific instructions
+    const stageBlock = fanStage ? `\n${STAGE_INSTRUCTIONS[fanStage]}\n` : "";
+
     return `You are ${name}, ${age} years old. ${backstory}
 ${contextBlock}
 
@@ -176,7 +227,7 @@ EXAMPLES OF BAD REPLIES (too AI):
 - Never start with "Hey there!" with exclamation
 - Never write paragraphs
 - Never sound like customer support
-${rulesBlock}${aiDeflectionBlock}
+${rulesBlock}${aiDeflectionBlock}${stageBlock}
 === NOW REPLY ===
 Reply to their last message. Be real. Be short. Be ${name}.`;
 }

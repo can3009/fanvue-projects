@@ -35,6 +35,29 @@ interface WebhookPayload {
     data: Record<string, unknown>;
 }
 
+/**
+ * Calculate human-like delay for responses
+ * If pending_count is high, delay increases slightly (more realistic)
+ * Formula: random(30..80) + min(pending_count * 5, 40) seconds
+ */
+function calculateHumanDelay(pendingCount: number = 0): number {
+    const baseDelay = 30 + Math.random() * 50; // 30-80 seconds
+    const pendingBonus = Math.min(pendingCount * 5, 40); // Max +40s for many messages
+    return Math.round(baseDelay + pendingBonus);
+}
+
+/**
+ * Determine fan stage based on message count and spend
+ */
+function determineFanStage(msgCount: number, totalSpend: number): string {
+    if (totalSpend >= 100) return 'vip';
+    if (totalSpend > 0) return 'post_purchase';
+    if (msgCount >= 20) return 'sales';
+    if (msgCount >= 10) return 'flirty';
+    if (msgCount >= 5) return 'warmup';
+    return 'new';
+}
+
 function isValidUUID(str: string): boolean {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     return uuidRegex.test(str);
@@ -127,7 +150,7 @@ async function verifyFanvueSignature(
 }
 
 serve(async (req) => {
-    console.log("➡️ fanvue-webhook hit", req.method, req.url);
+    console.log("➡️ fanvue-webhook hit (v66-CLEAN | DEPLOY-1436)", req.method, req.url);
 
     // Handle CORS preflight
     if (req.method === "OPTIONS") {
@@ -364,9 +387,9 @@ serve(async (req) => {
 
             // Determine if this message has media (any of these conditions)
             const hasMedia = hasMediaFlag ||
-                             mediaType !== undefined ||
-                             images.length > 0 ||
-                             videos.length > 0;
+                mediaType !== undefined ||
+                images.length > 0 ||
+                videos.length > 0;
 
             // Add system hints for media (only if we detected some)
             if (images.length > 0) {
@@ -404,29 +427,69 @@ serve(async (req) => {
                 );
             }
 
-            // Upsert Fan with both username and display_name
-            const { data: fan, error: fanError } = await supabase
+            // Get existing fan to update counters
+            const { data: existingFan } = await supabase
                 .from("fans")
-                .upsert(
-                    {
+                .select("id, msg_count_inbound, total_spend, stage")
+                .eq("creator_id", creatorId)
+                .eq("fanvue_fan_id", fanvueFanId)
+                .maybeSingle();
+
+            let fan: { id: string; stage: string };
+            let newMsgCount: number;
+
+            if (existingFan) {
+                // UPDATE existing fan - increment counter
+                newMsgCount = (existingFan.msg_count_inbound || 0) + 1;
+                const totalSpend = existingFan.total_spend || 0;
+                const newStage = determineFanStage(newMsgCount, totalSpend);
+
+                const { error: updateError } = await supabase
+                    .from("fans")
+                    .update({
+                        username: finalUsername,
+                        display_name: finalDisplayName,
+                        msg_count_inbound: newMsgCount,
+                        stage: newStage,
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", existingFan.id);
+
+                if (updateError) {
+                    console.error("❌ Fan update error:", updateError);
+                    // Continue anyway with existing fan data
+                }
+
+                fan = { id: existingFan.id, stage: newStage };
+                console.log("✅ Fan updated:", fan.id, "| Stage:", fan.stage, "| Msg#:", newMsgCount);
+            } else {
+                // INSERT new fan
+                newMsgCount = 1;
+                const newStage = "new";
+
+                const { data: newFan, error: insertError } = await supabase
+                    .from("fans")
+                    .insert({
                         creator_id: creatorId,
                         fanvue_fan_id: fanvueFanId,
                         username: finalUsername,
                         display_name: finalDisplayName,
-                    },
-                    { onConflict: "creator_id,fanvue_fan_id" }
-                )
-                .select()
-                .single();
+                        msg_count_inbound: 1,
+                        stage: newStage,
+                    })
+                    .select("id, stage")
+                    .single();
 
-            if (fanError) {
-                console.error("❌ Fan upsert error:", fanError);
-                throw fanError;
+                if (insertError || !newFan) {
+                    console.error("❌ Fan insert error:", insertError);
+                    throw insertError || new Error("Failed to create fan");
+                }
+
+                fan = newFan;
+                console.log("✅ Fan created:", fan.id, "| Stage:", fan.stage);
             }
 
-            console.log("✅ Fan upserted:", fan.id);
-
-            // Save inbound message with has_media flag
+            // 1. ALWAYS save inbound message first
             const { error: msgError } = await supabase.from("messages").insert({
                 creator_id: creatorId,
                 fan_id: fan.id,
@@ -453,24 +516,54 @@ serve(async (req) => {
                 { onConflict: "fan_id,creator_id" }
             );
 
-            // Check if job already exists for this message (prevent duplicates)
+            // 2. CHECK: Is there already a queued reply job for this fan?
             const { data: existingJob } = await supabase
                 .from("jobs_queue")
-                .select("id")
+                .select("id, pending_count, payload")
                 .eq("creator_id", creatorId)
                 .eq("fan_id", fan.id)
-                .contains("payload", { message_id: messageId })
+                .eq("job_type", "reply")
+                .eq("status", "queued")
                 .maybeSingle();
 
+            const now = new Date();
+            const nowIso = now.toISOString();
+
             if (existingJob) {
-                console.log("⏭️ Job already exists for message, skipping duplicate");
+                // === DEBOUNCE: Update existing job ===
+                const newPendingCount = (existingJob.pending_count || 0) + 1;
+                const newDelay = calculateHumanDelay(newPendingCount);
+                const newRunAt = new Date(now.getTime() + newDelay * 1000).toISOString();
+
+                await supabase
+                    .from("jobs_queue")
+                    .update({
+                        run_at: newRunAt,
+                        last_message_at: nowIso,
+                        pending_count: newPendingCount,
+                        payload: {
+                            ...existingJob.payload,
+                            last_message_id: messageId,
+                            has_media: hasMedia || existingJob.payload?.has_media,
+                            fan_stage: fan.stage,
+                        },
+                    })
+                    .eq("id", existingJob.id);
+
+                console.log(`🔄 Debounced: Job ${existingJob.id} | pending: ${newPendingCount} | run_at: +${newDelay}s`);
                 return new Response(
-                    JSON.stringify({ received: true, skipped: true, reason: "duplicate" }),
+                    JSON.stringify({
+                        received: true,
+                        debounced: true,
+                        job_id: existingJob.id,
+                        pending_count: newPendingCount,
+                        delay_seconds: newDelay,
+                    }),
                     { status: 200, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
                 );
             }
 
-            // Enqueue reply job - always queue if we have text OR media
+            // 3. CREATE NEW JOB (no existing queued job)
             const shouldQueue = messageContent.trim().length > 0 || hasMedia;
 
             if (!shouldQueue) {
@@ -481,10 +574,20 @@ serve(async (req) => {
                 );
             }
 
+            // Calculate initial delay (no pending messages yet)
+            const delaySeconds = calculateHumanDelay(0);
+            const runAt = new Date(now.getTime() + delaySeconds * 1000).toISOString();
+
+            console.log(`🕐 New job | delay: ${delaySeconds}s | run_at: ${runAt}`);
+
             const { error: jobError } = await supabase.from("jobs_queue").insert({
                 creator_id: creatorId,
                 fan_id: fan.id,
                 job_type: "reply",
+                status: "queued",
+                run_at: runAt,
+                last_message_at: nowIso,
+                pending_count: 0,
                 payload: {
                     message_id: messageId,
                     fan_message: messageContent,
@@ -492,13 +595,14 @@ serve(async (req) => {
                     fan_display_name: finalDisplayName,
                     fanvue_fan_id: fanvueFanId,
                     has_media: hasMedia,
+                    fan_stage: fan.stage,
                 },
             });
 
             if (jobError) {
                 console.error("❌ Job queue error:", jobError);
             } else {
-                console.log("✅ Reply job enqueued");
+                console.log("✅ Reply job created");
             }
 
             return new Response(
@@ -507,6 +611,8 @@ serve(async (req) => {
                     creator_id: creatorId,
                     fan_id: fan.id,
                     job_enqueued: !jobError,
+                    delay_seconds: delaySeconds,
+                    fan_stage: fan.stage,
                 }),
                 { status: 200, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
             );

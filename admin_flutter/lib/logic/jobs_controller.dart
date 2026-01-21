@@ -100,7 +100,8 @@ class JobsController extends StateNotifier<JobsState> {
     _stopRequested = true;
   }
 
-  /// Processes queued jobs for selected creators only.
+  /// Processes queued jobs continuously until manually stopped.
+  /// Polls every 5 seconds for new jobs when idle.
   Future<void> processQueue() async {
     if (state.processing) return;
 
@@ -110,23 +111,30 @@ class JobsController extends StateNotifier<JobsState> {
     try {
       final selectedIds = state.selectedCreatorIds;
 
-      // If no creators selected, process all
-      if (selectedIds.isEmpty) {
-        while (!_stopRequested) {
-          final didProcess = await _repository.triggerWorker();
-          if (!didProcess) break;
-          await load();
-        }
-      } else {
-        // Process only selected creators
-        for (final creatorId in selectedIds) {
-          if (_stopRequested) break;
-          while (!_stopRequested) {
-            final didProcess =
+      // Continuous processing loop - runs until manually stopped
+      while (!_stopRequested) {
+        bool didProcess = false;
+
+        // If no creators selected, process all
+        if (selectedIds.isEmpty) {
+          didProcess = await _repository.triggerWorker();
+        } else {
+          // Process only selected creators (round-robin)
+          for (final creatorId in selectedIds) {
+            if (_stopRequested) break;
+            final processed =
                 await _repository.triggerWorker(creatorId: creatorId);
-            if (!didProcess) break;
-            await load();
+            if (processed) didProcess = true;
           }
+        }
+
+        // Refresh job list
+        await load();
+
+        // If no jobs were processed, wait 5 seconds before checking again
+        // This prevents hammering the server when there are no jobs
+        if (!didProcess && !_stopRequested) {
+          await Future.delayed(const Duration(seconds: 5));
         }
       }
 
