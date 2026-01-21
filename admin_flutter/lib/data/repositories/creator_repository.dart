@@ -5,6 +5,22 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/creator.dart';
 import '../supabase_client_provider.dart';
 
+/// OAuth token status for a creator
+class OAuthTokenStatus {
+  const OAuthTokenStatus({
+    required this.hasToken,
+    this.expiresAt,
+    required this.isExpired,
+  });
+
+  final bool hasToken;
+  final DateTime? expiresAt;
+  final bool isExpired;
+
+  /// True if token exists and is not expired
+  bool get isValid => hasToken && !isExpired;
+}
+
 class CreatorRepository {
   CreatorRepository(this._client);
 
@@ -113,31 +129,41 @@ class CreatorRepository {
     required Map<String, dynamic> settings,
     required bool isActive,
   }) async {
-    final payload = {
-      'is_active': isActive,
-      'updated_at': DateTime.now().toIso8601String(),
-    };
-    try {
-      await _client
-          .from('creators')
-          .update({...payload, 'settings': settings})
-          .eq('id', creatorId);
-    } catch (_) {
-      await _client
-          .from('creators')
-          .update({...payload, 'settings_json': settings})
-          .eq('id', creatorId);
-    }
+    await _client
+        .from('creators')
+        .update({'is_active': isActive, 'settings_json': settings})
+        .eq('id', creatorId);
   }
 
-  Future<bool> hasOAuthToken(String creatorId) async {
+  /// Returns OAuth token status for a creator.
+  /// Returns null if no token exists.
+  Future<OAuthTokenStatus?> getOAuthStatus(String creatorId) async {
     final row = await _client
         .from('creator_oauth_tokens')
-        .select('*')
+        .select('access_token, expires_at')
         .eq('creator_id', creatorId)
         .limit(1)
         .maybeSingle();
-    return row != null;
+
+    if (row == null) return null;
+
+    final hasToken = row['access_token'] != null;
+    DateTime? expiresAt;
+    if (row['expires_at'] != null) {
+      expiresAt = DateTime.tryParse(row['expires_at'].toString());
+    }
+
+    return OAuthTokenStatus(
+      hasToken: hasToken,
+      expiresAt: expiresAt,
+      isExpired: expiresAt != null && expiresAt.isBefore(DateTime.now()),
+    );
+  }
+
+  /// Legacy method for backwards compatibility
+  Future<bool> hasOAuthToken(String creatorId) async {
+    final status = await getOAuthStatus(creatorId);
+    return status?.hasToken ?? false;
   }
 
   Uri buildOAuthUrl(String creatorId, String supabaseUrl) {

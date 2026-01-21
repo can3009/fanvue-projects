@@ -204,38 +204,38 @@ class CreatorsScreen extends ConsumerWidget {
           child: SizedBox(
             width: 280,
             child: SectionCard(
-            title: 'Creators',
-            expand: true,
-            actions: [
-              IconButton(
-                onPressed: ref.read(creatorsControllerProvider.notifier).load,
-                icon: const Icon(Icons.refresh),
-              ),
-              IconButton(
-                onPressed: () => _addCreator(context, ref),
-                icon: const Icon(Icons.add),
-              ),
-            ],
-            child: state.creators.isEmpty
-                ? const Text('No creators yet.')
-                : ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: state.creators.length,
-                    itemBuilder: (context, index) {
-                      final creator = state.creators[index];
-                      return ListTile(
-                        title: Text(creator.displayName),
-                        subtitle: Text(
-                          creator.isActive ? 'Active' : 'Inactive',
-                        ),
-                        selected: state.selected?.id == creator.id,
-                        onTap: () => ref
-                            .read(creatorsControllerProvider.notifier)
-                            .selectCreator(creator),
-                      );
-                    },
-                  ),
-          ),
+              title: 'Creators',
+              expand: true,
+              actions: [
+                IconButton(
+                  onPressed: ref.read(creatorsControllerProvider.notifier).load,
+                  icon: const Icon(Icons.refresh),
+                ),
+                IconButton(
+                  onPressed: () => _addCreator(context, ref),
+                  icon: const Icon(Icons.add),
+                ),
+              ],
+              child: state.creators.isEmpty
+                  ? const Text('No creators yet.')
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: state.creators.length,
+                      itemBuilder: (context, index) {
+                        final creator = state.creators[index];
+                        return ListTile(
+                          title: Text(creator.displayName),
+                          subtitle: Text(
+                            creator.isActive ? 'Active' : 'Inactive',
+                          ),
+                          selected: state.selected?.id == creator.id,
+                          onTap: () => ref
+                              .read(creatorsControllerProvider.notifier)
+                              .selectCreator(creator),
+                        );
+                      },
+                    ),
+            ),
           ),
         ),
         Expanded(
@@ -244,6 +244,7 @@ class CreatorsScreen extends ConsumerWidget {
               : _CreatorDetail(
                   creator: state.selected!,
                   oauthConnected: state.oauthConnected,
+                  oauthExpired: state.oauthExpired,
                   hasIntegration: state.hasIntegration,
                   onSave: (settings, isActive) => ref
                       .read(creatorsControllerProvider.notifier)
@@ -269,6 +270,7 @@ class _CreatorDetail extends StatefulWidget {
   const _CreatorDetail({
     required this.creator,
     required this.oauthConnected,
+    required this.oauthExpired,
     required this.hasIntegration,
     required this.onSave,
     required this.onStartOAuth,
@@ -278,11 +280,12 @@ class _CreatorDetail extends StatefulWidget {
 
   final Creator creator;
   final bool oauthConnected;
+  final bool oauthExpired;
   final bool hasIntegration;
   final Future<void> Function(CreatorSettings settings, bool isActive) onSave;
   final VoidCallback onStartOAuth;
   final Future<void> Function(String clientId, String clientSecret)
-      onUpdateIntegration;
+  onUpdateIntegration;
   final Future<void> Function() onDelete;
 
   @override
@@ -349,7 +352,10 @@ class _CreatorDetailState extends State<_CreatorDetail>
   @override
   void didUpdateWidget(covariant _CreatorDetail oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.creator.id != widget.creator.id) {
+    // Hydrate if creator ID changed OR if the settings object changed
+    if (oldWidget.creator.id != widget.creator.id ||
+        oldWidget.creator.settings != widget.creator.settings ||
+        oldWidget.creator.isActive != widget.creator.isActive) {
       _hydrate();
     }
   }
@@ -498,10 +504,18 @@ class _CreatorDetailState extends State<_CreatorDetail>
               : Colors.orange.withOpacity(0.2),
         ),
         const SizedBox(width: 4),
-        // OAuth status
+        // OAuth status - show expired in red!
         Chip(
-          label: Text(widget.oauthConnected ? 'OAuth ✓' : 'OAuth missing'),
-          backgroundColor: widget.oauthConnected
+          label: Text(
+            widget.oauthExpired
+                ? 'OAuth EXPIRED ⚠️'
+                : widget.oauthConnected
+                ? 'OAuth ✓'
+                : 'OAuth missing',
+          ),
+          backgroundColor: widget.oauthExpired
+              ? Colors.red.withOpacity(0.3)
+              : widget.oauthConnected
               ? Colors.green.withOpacity(0.2)
               : Colors.orange.withOpacity(0.2),
         ),
@@ -513,10 +527,18 @@ class _CreatorDetailState extends State<_CreatorDetail>
             icon: const Icon(Icons.key, size: 18),
             label: const Text('Add Credentials'),
           ),
-        if (widget.hasIntegration && !widget.oauthConnected)
-          ElevatedButton(
+        // Show reconnect button if OAuth is missing OR expired
+        if (widget.hasIntegration &&
+            (!widget.oauthConnected || widget.oauthExpired))
+          ElevatedButton.icon(
             onPressed: widget.onStartOAuth,
-            child: const Text('Connect OAuth'),
+            icon: Icon(widget.oauthExpired ? Icons.refresh : Icons.link),
+            label: Text(
+              widget.oauthExpired ? 'Reconnect OAuth' : 'Connect OAuth',
+            ),
+            style: widget.oauthExpired
+                ? ElevatedButton.styleFrom(backgroundColor: Colors.red)
+                : null,
           ),
         const SizedBox(width: 8),
         IconButton(
@@ -552,6 +574,27 @@ class _CreatorDetailState extends State<_CreatorDetail>
       child: Column(
         children: [
           // Active toggle at the top
+          // Creator IDs info
+          Container(
+            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildIdRow(context, 'DB ID', widget.creator.id),
+                const SizedBox(height: 4),
+                _buildIdRow(
+                  context,
+                  'Fanvue ID',
+                  widget.creator.fanvueCreatorId,
+                ),
+              ],
+            ),
+          ),
           SwitchListTile(
             value: _active,
             onChanged: (value) => setState(() => _active = value),
@@ -591,6 +634,45 @@ class _CreatorDetailState extends State<_CreatorDetail>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildIdRow(BuildContext context, String label, String value) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 80,
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+        ),
+        Expanded(
+          child: SelectableText(
+            value,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.copy, size: 16),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          tooltip: 'Copy $label',
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: value));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('$label kopiert!'),
+                duration: const Duration(seconds: 1),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 

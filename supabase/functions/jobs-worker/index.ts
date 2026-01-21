@@ -142,17 +142,19 @@ serve(async (req) => {
             }
 
             // Conversation history
+            // Conversation history - Fetch LATEST 10 messages
             const { data: messages, error: msgErr } = await supabase
                 .from("messages")
                 .select("direction, text, created_at")
                 .eq("creator_id", creator_id)
                 .eq("fan_id", fan_id)
-                .order("created_at", { ascending: true })
+                .order("created_at", { ascending: false }) // Get NEWEST first
                 .limit(10);
 
             if (msgErr) throw new Error(`Messages select failed: ${msgErr.message}`);
 
-            const history: ChatMessage[] = (messages || []).map((m: any) => ({
+            // Reverse to get chronological order (oldest to newest)
+            const history: ChatMessage[] = (messages || []).reverse().map((m: any) => ({
                 role: m.direction === "inbound" ? "user" : "assistant",
                 content: m.text,
             }));

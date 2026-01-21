@@ -352,8 +352,24 @@ serve(async (req) => {
             const senderData = payload.sender || {};
 
             const fanvueFanId = String(senderData.uuid || senderData.id || payload.senderUuid || "");
-            const messageContent = String(messageData.text || messageData.content || "");
+            let messageContent = String(messageData.text || messageData.content || "");
             const messageId = String(payload.messageUuid || messageData.uuid || messageData.id || "");
+
+            // Handle Media attachments
+            const images = messageData.images || [];
+            const videos = messageData.videos || [];
+
+            if (images.length > 0) {
+                messageContent += `\n[System: User sent ${images.length} image(s). You cannot see them, but acknowledge receiving them playfully.]`;
+            }
+            if (videos.length > 0) {
+                messageContent += `\n[System: User sent ${videos.length} video(s). You cannot see them, but acknowledge receiving them playfully.]`;
+            }
+
+            // If message is still empty but had media, ensure it's not empty
+            if (!messageContent.trim() && (images.length > 0 || videos.length > 0)) {
+                messageContent = "[User sent media]";
+            }
 
             // Extract both name fields from Fanvue
             const senderHandle = String(senderData.handle || senderData.username || "");

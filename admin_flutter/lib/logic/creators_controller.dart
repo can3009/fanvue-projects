@@ -10,6 +10,8 @@ class CreatorsState {
     required this.selected,
     required this.loading,
     required this.oauthConnected,
+    required this.oauthExpired,
+    this.oauthExpiresAt,
     required this.hasIntegration,
     required this.error,
   });
@@ -18,6 +20,8 @@ class CreatorsState {
   final Creator? selected;
   final bool loading;
   final bool oauthConnected;
+  final bool oauthExpired;
+  final DateTime? oauthExpiresAt;
   final bool hasIntegration;
   final String? error;
 
@@ -26,6 +30,9 @@ class CreatorsState {
     Creator? selected,
     bool? loading,
     bool? oauthConnected,
+    bool? oauthExpired,
+    DateTime? oauthExpiresAt,
+    bool clearOauthExpiresAt = false,
     bool? hasIntegration,
     String? error,
   }) {
@@ -34,6 +41,10 @@ class CreatorsState {
       selected: selected ?? this.selected,
       loading: loading ?? this.loading,
       oauthConnected: oauthConnected ?? this.oauthConnected,
+      oauthExpired: oauthExpired ?? this.oauthExpired,
+      oauthExpiresAt: clearOauthExpiresAt
+          ? null
+          : (oauthExpiresAt ?? this.oauthExpiresAt),
       hasIntegration: hasIntegration ?? this.hasIntegration,
       error: error,
     );
@@ -48,6 +59,7 @@ class CreatorsController extends StateNotifier<CreatorsState> {
           selected: null,
           loading: true,
           oauthConnected: false,
+          oauthExpired: false,
           hasIntegration: false,
           error: null,
         ),
@@ -64,17 +76,22 @@ class CreatorsController extends StateNotifier<CreatorsState> {
       final creators = await _repository.listCreators();
       final selected =
           state.selected ?? (creators.isNotEmpty ? creators.first : null);
-      final oauthConnected = selected == null
-          ? false
-          : await _repository.hasOAuthToken(selected.id);
+
+      // Get OAuth status
+      final oauthStatus = selected == null
+          ? null
+          : await _repository.getOAuthStatus(selected.id);
       final hasIntegration = selected == null
           ? false
           : await _repository.hasIntegration(selected.id);
+
       state = state.copyWith(
         creators: creators,
         selected: selected,
         loading: false,
-        oauthConnected: oauthConnected,
+        oauthConnected: oauthStatus?.hasToken ?? false,
+        oauthExpired: oauthStatus?.isExpired ?? false,
+        oauthExpiresAt: oauthStatus?.expiresAt,
         hasIntegration: hasIntegration,
       );
     } catch (error) {
@@ -84,14 +101,23 @@ class CreatorsController extends StateNotifier<CreatorsState> {
 
   Future<void> selectCreator(Creator? creator) async {
     if (creator == null) {
-      state = state.copyWith(selected: null, oauthConnected: false);
+      state = state.copyWith(
+        selected: null,
+        oauthConnected: false,
+        oauthExpired: false,
+        clearOauthExpiresAt: true,
+      );
       return;
     }
-    final oauthConnected = await _repository.hasOAuthToken(creator.id);
+
+    final oauthStatus = await _repository.getOAuthStatus(creator.id);
     final hasIntegration = await _repository.hasIntegration(creator.id);
+
     state = state.copyWith(
       selected: creator,
-      oauthConnected: oauthConnected,
+      oauthConnected: oauthStatus?.hasToken ?? false,
+      oauthExpired: oauthStatus?.isExpired ?? false,
+      oauthExpiresAt: oauthStatus?.expiresAt,
       hasIntegration: hasIntegration,
     );
   }

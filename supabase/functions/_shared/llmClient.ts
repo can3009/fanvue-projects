@@ -23,52 +23,48 @@ export const generateReply = async (
     const lastMessageLength = lastMessageText.length;
 
     const systemPrompt = buildSystemPrompt(settings, userUsesEmojis, lastMessageLength);
+    console.log("🛠️ System Prompt (first 200 chars):", systemPrompt.substring(0, 200));
+    console.log("🛠️ Settings used:", JSON.stringify(settings));
 
     const messages = [
         { role: 'system', content: systemPrompt },
         ...history
     ];
 
-    try {
-        // Short responses by default
-        let maxTokens = 80;
-        if (lastMessageLength > 150) maxTokens = 120;
-        if (lastMessageLength > 300) maxTokens = 180;
+    // Short responses by default
+    let maxTokens = 80;
+    if (lastMessageLength > 150) maxTokens = 120;
+    if (lastMessageLength > 300) maxTokens = 180;
 
-        const resp = await fetch(`${baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model,
-                messages,
-                stream: false,
-                temperature: 0.9,
-                max_tokens: maxTokens,
-            })
-        });
+    const resp = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+            model,
+            messages,
+            stream: false,
+            temperature: 0.9,
+            max_tokens: maxTokens,
+        })
+    });
 
-        if (!resp.ok) {
-            const txt = await resp.text();
-            console.error(`❌ Grok API Error: ${resp.status} - ${txt}`);
-            throw new Error(`Grok API Error: ${resp.status} - ${txt}`);
-        }
-
-        const json = await resp.json();
-        if (!json.choices?.[0]?.message) {
-            throw new Error("Unexpected Grok API response format");
-        }
-
-        const reply = json.choices[0].message.content;
-        console.log("✅ Grok reply generated:", reply.substring(0, 50) + "...");
-        return reply;
-
-    } catch (error) {
-        console.error("❌ Error generating reply:", error);
-        return "hey sorry was busy for a sec, whats up? 💕";
+    if (!resp.ok) {
+        const txt = await resp.text();
+        console.error(`❌ Grok API Error: ${resp.status} - ${txt}`);
+        throw new Error(`Grok API Error: ${resp.status} - ${txt}`);
     }
+
+    const json = await resp.json();
+    if (!json.choices?.[0]?.message) {
+        throw new Error("Unexpected Grok API response format");
+    }
+
+    const reply = json.choices[0].message.content;
+    console.log("✅ Grok reply generated:", reply.substring(0, 50) + "...");
+    return reply;
 };
 
 function buildSystemPrompt(settings: CreatorSettings, userUsesEmojis: boolean, msgLen: number): string {

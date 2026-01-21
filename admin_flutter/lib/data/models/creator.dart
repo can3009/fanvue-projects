@@ -128,6 +128,27 @@ class CreatorSettings {
     if (value is List) return value.map((e) => e.toString()).toList();
     return [];
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CreatorSettings &&
+          other.name == name &&
+          other.age == age &&
+          other.location == location &&
+          other.occupation == occupation &&
+          other.backstory == backstory &&
+          other.speakingStyle == speakingStyle &&
+          other.flirtiness == flirtiness &&
+          other.lewdness == lewdness &&
+          other.emojiUsage == emojiUsage &&
+          other.arrogance == arrogance &&
+          other.dominance == dominance &&
+          other.replyLength == replyLength);
+
+  @override
+  int get hashCode =>
+      Object.hash(name, age, location, occupation, flirtiness, lewdness);
 }
 
 class Creator {
