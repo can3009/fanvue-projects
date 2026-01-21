@@ -38,3 +38,35 @@ export const sendFanvueMessage = async (
         return { id: `fanvue-ok-${Date.now()}` };
     }
 };
+
+/**
+ * Mark a chat as read (green checkmark in Fanvue UI)
+ * This is what happens when the creator "opens" the chat
+ * 
+ * @param userUuid - The fan's Fanvue UUID (sender.uuid from webhook)
+ * @param accessToken - Creator's OAuth access token
+ */
+export const markChatAsRead = async (userUuid: string, accessToken: string): Promise<void> => {
+    const url = `https://api.fanvue.com/chats/${encodeURIComponent(userUuid)}`;
+
+    console.log("[markChatAsRead] CALLING:", { userUuid, url });
+
+    const resp = await fetch(url, {
+        method: "PATCH",
+        headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "X-Fanvue-API-Version": "2025-06-26",
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ isRead: true }),
+    });
+
+    const text = await resp.text().catch(() => "");
+    console.log("[markChatAsRead] RESPONSE:", { userUuid, status: resp.status, text });
+
+    if (!(resp.status === 204 || resp.ok)) {
+        throw new Error(`markChatAsRead failed: ${resp.status} ${text}`);
+    }
+};
+
+

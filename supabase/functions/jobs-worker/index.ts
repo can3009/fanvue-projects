@@ -2,7 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createSupabaseServiceClient } from "../_shared/supabaseClient.ts";
 import { generateReply, ChatMessage } from "../_shared/llmClient.ts";
-import { sendFanvueMessage } from "../_shared/fanvueClient.ts";
+import { sendFanvueMessage, markChatAsRead } from "../_shared/fanvueClient.ts";
 import { CreatorSettings, CORS_HEADERS } from "../_shared/types.ts";
 
 type JobRow = {
@@ -179,6 +179,21 @@ serve(async (req) => {
             if (tokenError || !tokens?.access_token) {
                 throw new Error(`No access token found for creator: ${tokenError?.message}`);
             }
+
+            // === MARK CHAT AS READ (Green checkmark ✓) ===
+            // Do this BEFORE generating the reply so the user sees the bot "opened" the chat
+            const fanvueFanId = job.payload?.fanvue_fan_id;
+            if (fanvueFanId) {
+                try {
+                    await markChatAsRead(fanvueFanId, tokens.access_token);
+                } catch (readError) {
+                    console.warn("⚠️ Could not mark chat as read:", readError);
+                    // Continue anyway - read receipts are not critical
+                }
+            }
+
+
+
 
             // Conversation history - Fetch LATEST 10 messages (including has_media)
             const { data: messages, error: msgErr } = await supabase

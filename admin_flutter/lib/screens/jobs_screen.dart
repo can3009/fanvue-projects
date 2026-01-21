@@ -4,7 +4,18 @@ import 'package:intl/intl.dart';
 
 import '../data/models/job.dart';
 import '../logic/jobs_controller.dart';
-import '../widgets/section_card.dart';
+import '../l10n/app_localizations.dart';
+
+// --- THEME CONSTANTS (Premium Dark) ---
+const kBgColorDark = Color(0xFF0F1115);
+const kCardColorDark = Color(0xFF1B222F);
+const kPrimaryColor = Color(0xFF06B6D4); // Cyan-500
+const kSecondaryColor = Color(0xFF6366F1); // Indigo-500
+const kSuccessColor = Color(0xFF10B981);
+const kDangerColor = Color(0xFFEF4444);
+const kWarningColor = Color(0xFFF59E0B);
+const kTextPrimary = Colors.white;
+const kTextSecondary = Color(0xFF9CA3AF);
 
 class JobsScreen extends ConsumerWidget {
   const JobsScreen({super.key});
@@ -12,82 +23,262 @@ class JobsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(jobsControllerProvider);
+    final strings = AppLocalizations.of(context);
+
+    // Helper decoration for cards
+    final cardDecoration = BoxDecoration(
+      color: kCardColorDark,
+      borderRadius: BorderRadius.circular(24),
+      border: Border.all(color: Colors.white.withOpacity(0.05)),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.2),
+          blurRadius: 10,
+          offset: const Offset(0, 4),
+        ),
+      ],
+    );
 
     if (state.loading && state.jobs.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(color: kPrimaryColor),
+      );
     }
 
     if (state.error != null && state.jobs.isEmpty) {
-      return Center(child: Text(state.error!));
+      return Center(
+        child: Text(state.error!, style: const TextStyle(color: kDangerColor)),
+      );
     }
 
-    return Row(
-      children: [
-        Expanded(
-          child: SectionCard(
-            title: 'Jobs queue',
-            expand: true,
-            actions: [
-              // Creator Filter Dropdown
-              _CreatorFilterDropdown(
-                creators: state.creators,
-                selectedIds: state.selectedCreatorIds,
-                onToggle: (id) =>
-                    ref.read(jobsControllerProvider.notifier).toggleCreator(id),
-                onSelectAll: () => ref
-                    .read(jobsControllerProvider.notifier)
-                    .selectAllCreators(),
-                onDeselectAll: () => ref
-                    .read(jobsControllerProvider.notifier)
-                    .deselectAllCreators(),
-              ),
-              const SizedBox(width: 8),
-              // Play/Pause Button
-              state.processing
-                  ? IconButton(
-                      onPressed: () => ref
-                          .read(jobsControllerProvider.notifier)
-                          .stopProcessing(),
-                      icon: const Icon(Icons.pause, color: Colors.orange),
-                      tooltip: 'Pause processing',
-                    )
-                  : IconButton(
-                      onPressed: () => ref
-                          .read(jobsControllerProvider.notifier)
-                          .processQueue(),
-                      icon: const Icon(Icons.play_arrow, color: Colors.green),
-                      tooltip: state.selectedCreatorIds.isEmpty
-                          ? 'Process all jobs'
-                          : 'Process jobs for ${state.selectedCreatorIds.length} creator(s)',
-                    ),
-              IconButton(
-                onPressed: () =>
-                    ref.read(jobsControllerProvider.notifier).load(),
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh jobs',
-              ),
-            ],
-            child: state.jobs.isEmpty
-                ? const Center(child: Text('No jobs found.'))
-                : ListView.separated(
-                    itemCount: state.jobs.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final job = state.jobs[index];
-                      return _JobTile(
-                        job: job,
-                        onRetry: () => ref
-                            .read(jobsControllerProvider.notifier)
-                            .retry(job),
-                        onCancel: () => ref
-                            .read(jobsControllerProvider.notifier)
-                            .cancel(job),
-                      );
-                    },
+    return Scaffold(
+      backgroundColor: kBgColorDark,
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          children: [
+            // --- Header & Controls ---
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: cardDecoration,
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.work_history,
+                    color: kPrimaryColor,
+                    size: 28,
                   ),
-          ),
+                  const SizedBox(width: 12),
+                  Text(
+                    strings.jobsQueue,
+                    style: const TextStyle(
+                      color: kTextPrimary,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+
+                  // Filter
+                  Container(
+                    decoration: BoxDecoration(
+                      color: kBgColorDark,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withOpacity(0.1)),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: _CreatorFilterDropdown(
+                      creators: state.creators,
+                      selectedIds: state.selectedCreatorIds,
+                      onToggle: (id) => ref
+                          .read(jobsControllerProvider.notifier)
+                          .toggleCreator(id),
+                      onSelectAll: () => ref
+                          .read(jobsControllerProvider.notifier)
+                          .selectAllCreators(),
+                      onDeselectAll: () => ref
+                          .read(jobsControllerProvider.notifier)
+                          .deselectAllCreators(),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+
+                  // Refresh Button
+                  IconButton(
+                    onPressed: () =>
+                        ref.read(jobsControllerProvider.notifier).load(),
+                    icon: const Icon(Icons.refresh, color: kTextSecondary),
+                    tooltip: strings.refreshJobs /* TODO: Localize tooltip? */,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // --- Process Button (High Visibility) ---
+            state.processing
+                ? Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: kWarningColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: kWarningColor.withOpacity(0.5)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: kWarningColor,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Text(
+                          strings.processing,
+                          style: const TextStyle(
+                            color: kWarningColor,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        TextButton.icon(
+                          onPressed: () => ref
+                              .read(jobsControllerProvider.notifier)
+                              .stopProcessing(),
+                          icon: const Icon(Icons.pause, color: kWarningColor),
+                          label: Text(
+                            strings.pause,
+                            style: const TextStyle(color: kWarningColor),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [kSuccessColor, kSuccessColor.withOpacity(0.8)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: kSuccessColor.withOpacity(0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => ref
+                            .read(jobsControllerProvider.notifier)
+                            .processQueue(),
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 20,
+                            horizontal: 24,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.play_circle_fill,
+                                color: Colors.white,
+                                size: 32,
+                              ),
+                              const SizedBox(width: 16),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    strings.startProcessingQueue,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    state.selectedCreatorIds.isEmpty
+                                        ? '${strings.willProcessJobsFor} ${strings.allCreators}'
+                                        : '${strings.willProcessJobsFor} ${state.selectedCreatorIds.length} creator(s)',
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.9),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+            const SizedBox(height: 24),
+
+            // --- Jobs List ---
+            Expanded(
+              child: Container(
+                decoration: cardDecoration,
+                child: state.jobs.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.assignment_turned_in_outlined,
+                              size: 64,
+                              color: Colors.white10,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              strings.noJobsFound,
+                              style: const TextStyle(
+                                color: kTextSecondary,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: ListView.separated(
+                          padding: const EdgeInsets.all(8),
+                          itemCount: state.jobs.length,
+                          separatorBuilder: (_, __) =>
+                              const Divider(height: 1, color: Colors.white10),
+                          itemBuilder: (context, index) {
+                            final job = state.jobs[index];
+                            return _JobTile(
+                              job: job,
+                              onRetry: () => ref
+                                  .read(jobsControllerProvider.notifier)
+                                  .retry(job),
+                              onCancel: () => ref
+                                  .read(jobsControllerProvider.notifier)
+                                  .cancel(job),
+                            );
+                          },
+                        ),
+                      ),
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
@@ -111,15 +302,17 @@ class _CreatorFilterDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasSelection = selectedIds.isNotEmpty;
+    final strings = AppLocalizations.of(context);
 
     return PopupMenuButton<String>(
-      tooltip: 'Select creators to process',
+      color: kCardColorDark,
+      tooltip: strings.filterByCreator, // Localized tooltip
       icon: Badge(
         isLabelVisible: hasSelection,
         label: Text('${selectedIds.length}'),
         child: Icon(
           Icons.filter_list,
-          color: hasSelection ? Theme.of(context).colorScheme.primary : null,
+          color: hasSelection ? kPrimaryColor : kTextSecondary,
         ),
       ),
       itemBuilder: (context) => [
@@ -130,10 +323,11 @@ class _CreatorFilterDropdown extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Filter by Creator',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                strings.filterByCreator, // Localized header
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: kTextPrimary,
+                ),
               ),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -143,21 +337,27 @@ class _CreatorFilterDropdown extends StatelessWidget {
                       onSelectAll();
                       Navigator.pop(context);
                     },
-                    child: const Text('All'),
+                    child: const Text(
+                      'All',
+                      style: TextStyle(color: kPrimaryColor),
+                    ) /* TODO: Localize 'All' */,
                   ),
                   TextButton(
                     onPressed: () {
                       onDeselectAll();
                       Navigator.pop(context);
                     },
-                    child: const Text('None'),
+                    child: Text(
+                      strings.none,
+                      style: const TextStyle(color: kTextSecondary),
+                    ),
                   ),
                 ],
               ),
             ],
           ),
         ),
-        const PopupMenuDivider(),
+        const PopupMenuDivider(height: 1),
         // Creator list
         ...creators.map((creator) {
           final isSelected = selectedIds.contains(creator.id);
@@ -165,18 +365,32 @@ class _CreatorFilterDropdown extends StatelessWidget {
             value: creator.id,
             child: Row(
               children: [
-                Checkbox(value: isSelected, onChanged: (_) {}),
+                Checkbox(
+                  value: isSelected,
+                  onChanged: (_) {},
+                  activeColor: kPrimaryColor,
+                  checkColor: Colors.white,
+                  side: const BorderSide(color: kTextSecondary),
+                ),
                 const SizedBox(width: 8),
-                Expanded(child: Text(creator.displayName)),
+                Expanded(
+                  child: Text(
+                    creator.displayName,
+                    style: const TextStyle(color: kTextPrimary),
+                  ),
+                ),
               ],
             ),
           );
         }),
         // Info text at bottom
         if (creators.isEmpty)
-          const PopupMenuItem<String>(
+          PopupMenuItem<String>(
             enabled: false,
-            child: Text('No creators found'),
+            child: Text(
+              strings.noCreatorsFound,
+              style: const TextStyle(color: kTextSecondary),
+            ),
           ),
       ],
       onSelected: (creatorId) {
@@ -199,54 +413,141 @@ class _JobTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
     final runAt = _formatDate(job.runAt);
-    final creatorLabel = job.creatorName ?? 'Unknown';
+    final creatorLabel = job.creatorName ?? strings.unknown;
 
     // Color based on status
-    Color? statusColor;
+    Color statusColor;
+    IconData statusIcon;
+
     switch (job.status) {
       case 'queued':
-        statusColor = Colors.blue;
+        statusColor = kPrimaryColor; // Blue/Cyan
+        statusIcon = Icons.schedule;
         break;
       case 'processing':
-        statusColor = Colors.orange;
+        statusColor = kWarningColor; // Orange
+        statusIcon = Icons.hourglass_top;
         break;
       case 'completed':
-        statusColor = Colors.green;
+        statusColor = kSuccessColor; // Green
+        statusIcon = Icons.check_circle;
         break;
       case 'failed':
-        statusColor = Colors.red;
+        statusColor = kDangerColor; // Red
+        statusIcon = Icons.error;
         break;
+      default:
+        statusColor = kTextSecondary;
+        statusIcon = Icons.help_outline;
     }
 
-    return ListTile(
-      leading: Icon(
-        job.status == 'completed'
-            ? Icons.check_circle
-            : job.status == 'failed'
-            ? Icons.error
-            : job.status == 'processing'
-            ? Icons.hourglass_top
-            : Icons.schedule,
-        color: statusColor,
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: kBgColorDark.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.02)),
       ),
-      title: Text('${job.type} • ${job.status}'),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [Text('Creator: $creatorLabel'), Text('Run at: $runAt')],
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (job.status == 'failed' || job.status == 'queued')
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
-          if (job.status == 'queued' || job.status == 'processing')
-            TextButton(
-              onPressed: onCancel,
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
-              child: const Text('Cancel'),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: statusColor.withOpacity(0.1),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(statusIcon, color: statusColor, size: 24),
+        ),
+        title: Row(
+          children: [
+            Text(
+              job.type.toUpperCase(),
+              style: const TextStyle(
+                color: kTextPrimary,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
             ),
-        ],
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: statusColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: statusColor.withOpacity(0.3)),
+              ),
+              child: Text(
+                job.status.toUpperCase(),
+                style: TextStyle(
+                  color: statusColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 10,
+                ),
+              ),
+            ),
+          ],
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 6.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.person, size: 14, color: kTextSecondary),
+                  const SizedBox(width: 4),
+                  Text(
+                    creatorLabel,
+                    style: const TextStyle(color: kTextSecondary, fontSize: 13),
+                  ),
+                  const SizedBox(width: 12),
+                  const Icon(
+                    Icons.access_time,
+                    size: 14,
+                    color: kTextSecondary,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    runAt,
+                    style: const TextStyle(color: kTextSecondary, fontSize: 13),
+                  ),
+                ],
+              ),
+              if (job.lastError != null && job.lastError!.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '${strings.errorLabel}${job.lastError}',
+                  style: TextStyle(
+                    color: kDangerColor.withOpacity(0.8),
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ],
+          ),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (job.status == 'failed' || job.status == 'queued')
+              IconButton(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh, color: kPrimaryColor),
+                tooltip: strings.retry,
+              ),
+            if (job.status == 'queued' || job.status == 'processing')
+              IconButton(
+                onPressed: onCancel,
+                icon: const Icon(Icons.cancel_outlined, color: kDangerColor),
+                tooltip: strings.cancel,
+              ),
+          ],
+        ),
       ),
     );
   }
