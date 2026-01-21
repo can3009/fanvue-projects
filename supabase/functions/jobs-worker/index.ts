@@ -12,12 +12,48 @@ type JobRow = {
     run_at: string;
     attempts: number | null;
     last_error: string | null;
+    created_at: string;
 
     creator_id: string;
     fan_id: string | null;
 
     payload: any;
 };
+
+// Generate unique media fallback response via LLM
+async function generateMediaFallbackResponse(settings: CreatorSettings): Promise<string> {
+    const systemPrompt = `Du bist ein flirty Chat-Partner. Der User hat dir ein Bild/Video geschickt, aber du kannst es technisch NICHT sehen - du siehst nur ein Anhang-Symbol.
+
+WICHTIG:
+- Du darfst NIEMALS so tun als hättest du das Bild gesehen
+- Frag spielerisch/neugierig was drauf ist
+- Sei kreativ und variiere deine Antworten - nie zweimal das gleiche sagen
+- Kurz halten (1-2 Sätze max)
+- Passend zum Persona: ${settings.persona_name || "flirty creator"}
+- Ton: ${settings.tone || "playful, teasing"}
+
+Beispiel-Vibes (aber erfinde was NEUES):
+- Neugierig fragen was drauf ist
+- Spielerisch beschweren dass du es nicht öffnen kannst
+- Flirty nachfragen ob es cute oder spicy ist`;
+
+    const response = await generateReply(
+        [{ role: "user", content: "[User hat ein Bild/Video geschickt ohne Text]" }],
+        settings,
+        systemPrompt
+    );
+    return response;
+}
+
+function isMediaOnlyMessage(text: string | null | undefined): boolean {
+    if (!text) return true;
+    const trimmed = text.trim();
+    if (trimmed === "") return true;
+    if (trimmed === "[User sent media]") return true;
+    // Also check for the system hint pattern
+    if (trimmed.match(/^\[System:.*media.*\]$/i)) return true;
+    return false;
+}
 
 serve(async (req) => {
     if (req.method === "OPTIONS") {
@@ -96,7 +132,10 @@ serve(async (req) => {
 
             const fan_message = job.payload?.fan_message;
             const message_id = job.payload?.message_id;
-            if (!fan_message) throw new Error("Job payload missing fan_message");
+            const hasMedia = job.payload?.has_media === true;
+
+            // Allow empty fan_message if has_media is true
+            if (!fan_message && !hasMedia) throw new Error("Job payload missing fan_message and no media");
 
             // CHECK: Have we already replied to this message?
             // Look for any outbound message to this fan after the job was created
@@ -141,17 +180,73 @@ serve(async (req) => {
                 throw new Error(`No access token found for creator: ${tokenError?.message}`);
             }
 
-            // Conversation history
-            // Conversation history - Fetch LATEST 10 messages
+            // Conversation history - Fetch LATEST 10 messages (including has_media)
             const { data: messages, error: msgErr } = await supabase
                 .from("messages")
-                .select("direction, text, created_at")
+                .select("direction, text, created_at, has_media")
                 .eq("creator_id", creator_id)
                 .eq("fan_id", fan_id)
                 .order("created_at", { ascending: false }) // Get NEWEST first
                 .limit(10);
 
             if (msgErr) throw new Error(`Messages select failed: ${msgErr.message}`);
+
+            // Check the LAST inbound message for media-only fallback
+            const lastInbound = (messages || []).find((m: any) => m.direction === "inbound");
+
+            // FALLBACK LOGIC: Media received but no usable text/URL
+            // Conditions: has_media=true AND (text is empty OR text is placeholder)
+            if (lastInbound?.has_media === true && isMediaOnlyMessage(lastInbound.text)) {
+                console.log("📎 Media-only message detected, generating unique LLM response");
+
+                // Get Fanvue fan ID
+                const { data: fanData, error: fanError } = await supabase
+                    .from("fans")
+                    .select("fanvue_fan_id")
+                    .eq("id", fan_id)
+                    .single();
+
+                if (fanError || !fanData?.fanvue_fan_id) throw new Error(`Fan not found: ${fanError?.message}`);
+
+                // Generate unique fallback via LLM (uses creator settings for persona)
+                const settings = (creator.settings_json || {}) as CreatorSettings;
+                const fallbackReply = await generateMediaFallbackResponse(settings);
+                console.log(`🎭 LLM fallback reply: ${fallbackReply.substring(0, 50)}...`);
+
+                // Send fallback to Fanvue
+                const sent = await sendFanvueMessage(fanData.fanvue_fan_id, fallbackReply, tokens.access_token);
+                console.log(`📤 Fallback sent to Fanvue: ${sent.id}`);
+
+                // Store outbound
+                await supabase.from("messages").insert({
+                    creator_id,
+                    fan_id,
+                    direction: "outbound",
+                    text: fallbackReply,
+                    provider_message_id: sent.id,
+                    created_at: new Date().toISOString(),
+                });
+
+                // Update conversation_state
+                await supabase.from("conversation_state").upsert(
+                    {
+                        creator_id,
+                        fan_id,
+                        last_bot_message_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                    },
+                    { onConflict: "creator_id,fan_id" },
+                );
+
+                // Mark job completed and return early
+                await supabase.from("jobs_queue").update({ status: "completed", last_error: null }).eq("id", job.id);
+                console.log(`✅ Job ${job.id} completed (media fallback)`);
+
+                return new Response(JSON.stringify({ success: true, jobId: job.id, jobType: job.job_type, fallback: true }), {
+                    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+                    status: 200,
+                });
+            }
 
             // Reverse to get chronological order (oldest to newest)
             const history: ChatMessage[] = (messages || []).reverse().map((m: any) => ({

@@ -178,7 +178,8 @@ serve(async (req) => {
             );
         }
 
-        console.log("📦 Raw payload (first 500 chars):", rawBody.substring(0, 500));
+        // Limited logging to prevent 503 errors
+        console.log("📦 Payload keys:", Object.keys(payload).join(", "));
 
         // 1. Determine creatorId - try URL param first, then extract from payload
         const url = new URL(req.url);
@@ -355,21 +356,36 @@ serve(async (req) => {
             let messageContent = String(messageData.text || messageData.content || "");
             const messageId = String(payload.messageUuid || messageData.uuid || messageData.id || "");
 
-            // Handle Media attachments
+            // Handle Media attachments - ROBUST detection
             const images = messageData.images || [];
             const videos = messageData.videos || [];
+            const hasMediaFlag = messageData.hasMedia === true;
+            const mediaType = messageData.mediaType;
 
+            // Determine if this message has media (any of these conditions)
+            const hasMedia = hasMediaFlag ||
+                             mediaType !== undefined ||
+                             images.length > 0 ||
+                             videos.length > 0;
+
+            // Add system hints for media (only if we detected some)
             if (images.length > 0) {
                 messageContent += `\n[System: User sent ${images.length} image(s). You cannot see them, but acknowledge receiving them playfully.]`;
             }
             if (videos.length > 0) {
                 messageContent += `\n[System: User sent ${videos.length} video(s). You cannot see them, but acknowledge receiving them playfully.]`;
             }
+            // Fallback: hasMedia flag or mediaType but no images/videos array
+            if (hasMedia && images.length === 0 && videos.length === 0 && !messageContent.includes("[System:")) {
+                messageContent += `\n[System: User sent media attachment. You cannot see it, but acknowledge receiving it playfully.]`;
+            }
 
-            // If message is still empty but had media, ensure it's not empty
-            if (!messageContent.trim() && (images.length > 0 || videos.length > 0)) {
+            // If message text is empty but has media, use placeholder
+            if (!messageContent.trim() && hasMedia) {
                 messageContent = "[User sent media]";
             }
+
+            console.log("📎 Media detection:", { hasMedia, hasMediaFlag, mediaType, imagesCount: images.length, videosCount: videos.length });
 
             // Extract both name fields from Fanvue
             const senderHandle = String(senderData.handle || senderData.username || "");
@@ -410,13 +426,14 @@ serve(async (req) => {
 
             console.log("✅ Fan upserted:", fan.id);
 
-            // Save inbound message
+            // Save inbound message with has_media flag
             const { error: msgError } = await supabase.from("messages").insert({
                 creator_id: creatorId,
                 fan_id: fan.id,
                 direction: "inbound",
                 text: messageContent,
                 provider_message_id: messageId,
+                has_media: hasMedia,
             });
 
             if (msgError) {
@@ -453,7 +470,17 @@ serve(async (req) => {
                 );
             }
 
-            // Enqueue reply job
+            // Enqueue reply job - always queue if we have text OR media
+            const shouldQueue = messageContent.trim().length > 0 || hasMedia;
+
+            if (!shouldQueue) {
+                console.log("⏭️ No text and no media, skipping job creation");
+                return new Response(
+                    JSON.stringify({ received: true, skipped: true, reason: "empty_message" }),
+                    { status: 200, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+                );
+            }
+
             const { error: jobError } = await supabase.from("jobs_queue").insert({
                 creator_id: creatorId,
                 fan_id: fan.id,
@@ -464,6 +491,7 @@ serve(async (req) => {
                     fan_username: finalUsername,
                     fan_display_name: finalDisplayName,
                     fanvue_fan_id: fanvueFanId,
+                    has_media: hasMedia,
                 },
             });
 
