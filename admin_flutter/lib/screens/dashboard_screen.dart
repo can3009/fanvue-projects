@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import '../logic/dashboard_controller.dart';
 import 'onboarding_screen.dart';
 import 'package:admin_flutter/l10n/app_localizations.dart';
+import '../widgets/mass_messages_dialog.dart';
+import '../widgets/ppv_requests_dialog.dart';
 
 // --- THEME CONSTANTS (Premium Dark) ---
 const kBgColorDark = Color(0xFF0F1115);
@@ -68,13 +70,40 @@ class DashboardScreen extends ConsumerWidget {
                         color: kPrimaryColor,
                       ),
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: _MetricTile(
                         label: strings.queuedJobs,
                         value: data.queuedJobs.toString(),
                         icon: Icons.queue_music_rounded,
                         color: kSecondaryColor,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: InkWell(
+                        onTap: () {
+                          showDialog(
+                            context: context,
+                            builder: (_) => const PPVRequestsDialog(),
+                          );
+                        },
+                        borderRadius: BorderRadius.circular(20),
+                        child: const _MetricTile(
+                          label: 'PPV Requests',
+                          value: '12',
+                          icon: Icons.shopping_bag_outlined,
+                          color: kWarningColor,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _MetricTile(
+                        label: strings.dailyRevenue,
+                        value: '\$1,029', // Mock value
+                        icon: Icons.attach_money_rounded,
+                        color: kSuccessColor,
                       ),
                     ),
                   ],
@@ -114,6 +143,35 @@ class DashboardScreen extends ConsumerWidget {
                           elevation: 0,
                           side: BorderSide(
                             color: kPrimaryColor.withOpacity(0.3),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          showDialog(
+                            context: context,
+                            builder: (_) => const MassMessagesDialog(),
+                          );
+                        },
+                        icon: const Icon(Icons.send_rounded, size: 20),
+                        label: const Text('Mass Messages'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kSecondaryColor.withOpacity(0.15),
+                          foregroundColor: kSecondaryColor,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 12,
+                          ),
+                          elevation: 0,
+                          side: BorderSide(
+                            color: kSecondaryColor.withOpacity(0.3),
                           ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -341,53 +399,54 @@ class _MetricTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 160, // Fixed height for consistency
-      // Width is controlled by parent Expanded/Row
-      padding: const EdgeInsets.all(24),
+      height: 125, // Increased height to prevent overflow
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: kCardColorDark,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.white.withOpacity(0.05)),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            kCardColorDark,
-            kCardColorDark.withLightness(
-              0.12,
-            ), // Slight lighten extension method or manual tweak needed? Let's stick to simple opacity overlay if needed
-          ],
+          colors: [kCardColorDark, kCardColorDark.withLightness(0.12)],
         ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color, size: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 20),
+              ),
+            ],
           ),
           const Spacer(),
           Text(
             value,
             style: const TextStyle(
               color: kTextPrimary,
-              fontSize: 32,
+              fontSize: 24,
               fontWeight: FontWeight.bold,
               height: 1.0,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           Text(
             label,
             style: TextStyle(
               color: kTextSecondary.withOpacity(0.8),
-              fontSize: 14,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
+            maxLines: 1, // Ensure single line label
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),

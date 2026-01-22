@@ -94,6 +94,26 @@ class AppLocalizations {
       'refreshCreators': 'Refresh Creators',
       'refreshMessages': 'Refresh Messages',
       'selectCreator': 'Select Creator',
+      'massMessagesTitle': 'Mass Messages',
+      'audience': 'Audience',
+      'writeMessage': 'Write Message',
+      'generateWithGrok': 'Generate with Grok',
+      'sendMassMessage': 'Send Mass Message',
+      'selectAudience': 'Select Audience',
+      'allSubs': 'All Subscribers',
+      'highSpenders': 'High Spenders',
+      'newSubscribers': 'New Subscribers',
+      'inactiveSubs': 'Inactive Subscribers',
+      'messageTemplate': 'Message Template',
+      'ppvRequestsTitle': 'PPV Requests',
+      'manageRequests': 'Manage custom content requests',
+      'close': 'Close',
+      'accept': 'Accept',
+      'decline': 'Decline',
+      'massMessagesDesc': 'Send bulk messages to your fans',
+      'vips': 'VIPs',
+      'selectedLists': 'Selected: %s lists',
+      'dailyRevenue': 'Daily Revenue',
     },
     'de': {
       'settingsTitle': 'Einstellungen',
@@ -175,6 +195,26 @@ class AppLocalizations {
       'refreshCreators': 'Creator aktualisieren',
       'refreshMessages': 'Nachrichten aktualisieren',
       'selectCreator': 'Creator wählen',
+      'massMessagesTitle': 'Massen-Nachrichten',
+      'audience': 'Zielgruppe',
+      'writeMessage': 'Nachricht schreiben',
+      'generateWithGrok': 'Mit Grok generieren',
+      'sendMassMessage': 'Massen-Nachricht senden',
+      'selectAudience': 'Zielgruppe wählen',
+      'allSubs': 'Alle Abonnenten',
+      'highSpenders': 'Hohe Ausgaben',
+      'newSubscribers': 'Neue Abonnenten',
+      'inactiveSubs': 'Inaktive Abonnenten',
+      'messageTemplate': 'Nachrichtenvorlage',
+      'ppvRequestsTitle': 'PPV Anfragen',
+      'manageRequests': 'Anfragen verwalten',
+      'close': 'Schließen',
+      'accept': 'Akzeptieren',
+      'decline': 'Ablehnen',
+      'massMessagesDesc': 'Massen-Nachrichten an Ihre Fans senden',
+      'vips': 'VIPs',
+      'selectedLists': 'Ausgewählt: %s Listen',
+      'dailyRevenue': 'Tagesumsatz',
     },
   };
 
@@ -257,6 +297,27 @@ class AppLocalizations {
   String get refreshCreators => get('refreshCreators');
   String get refreshMessages => get('refreshMessages');
   String get selectCreator => get('selectCreator');
+  String get massMessagesTitle => get('massMessagesTitle');
+  String get audience => get('audience');
+  String get writeMessage => get('writeMessage');
+  String get generateWithGrok => get('generateWithGrok');
+  String get sendMassMessage => get('sendMassMessage');
+  String get selectAudience => get('selectAudience');
+  String get allSubs => get('allSubs');
+  String get highSpenders => get('highSpenders');
+  String get newSubscribers => get('newSubscribers');
+  String get inactiveSubs => get('inactiveSubs');
+  String get messageTemplate => get('messageTemplate');
+  String get ppvRequestsTitle => get('ppvRequestsTitle');
+  String get manageRequests => get('manageRequests');
+  String get close => get('close');
+  String get accept => get('accept');
+  String get decline => get('decline');
+  String get massMessagesDesc => get('massMessagesDesc');
+  String get vips => get('vips');
+  String selectedLists(String count) =>
+      get('selectedLists').replaceAll('%s', count);
+  String get dailyRevenue => get('dailyRevenue');
 
   String deleteCreatorConfirm(String name) =>
       get('deleteCreatorConfirm').replaceAll('%s', name);
