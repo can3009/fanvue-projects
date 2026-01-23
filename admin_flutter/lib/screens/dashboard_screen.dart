@@ -188,7 +188,7 @@ class DashboardScreen extends ConsumerWidget {
                     Expanded(
                       child: _MetricTile(
                         label: strings.dailyRevenue,
-                        value: '\$1,029', // Mock value
+                        value: '\$${data.dailyRevenue.toStringAsFixed(0)}',
                         icon: Icons.attach_money_rounded,
                         color: kSuccessColor,
                       ),

@@ -47,11 +47,29 @@ class DashboardRepository {
           .limit(5);
       dev.log('Messages loaded: ${lastMessages.length}');
 
+      dev.log('Loading daily revenue...');
+      final now = DateTime.now();
+      final yesterday = now.subtract(const Duration(hours: 24));
+
+      final transactions = await _client
+          .from('transactions')
+          .select('amount')
+          .gte('created_at', yesterday.toIso8601String());
+
+      double dailyRev = 0;
+      for (final t in transactions) {
+        if (t['amount'] != null) {
+          dailyRev += (t['amount'] as num).toDouble();
+        }
+      }
+      dev.log('Daily revenue: $dailyRev');
+
       return DashboardMetrics(
         creators: creatorsCountResponse.count,
         queuedJobs: queuedJobsCountResponse.count,
         recentErrors: List<Map<String, dynamic>>.from(errors as List),
         recentMessages: List<Map<String, dynamic>>.from(lastMessages as List),
+        dailyRevenue: dailyRev,
       );
     } catch (e, stack) {
       dev.log('Dashboard error: $e', error: e, stackTrace: stack);
