@@ -28,8 +28,14 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
   final Set<String> _selectedTargetLists = {};
   final Set<String> _selectedExcludeLists = {};
   final TextEditingController _messageController = TextEditingController();
+  final TextEditingController _topicController = TextEditingController();
 
   String _selectedStyle = 'tease';
+  String _selectedLanguage = 'German';
+  String _selectedLength = 'Mittel';
+  final TextEditingController _excludedWordsController =
+      TextEditingController();
+  bool _useEmojis = true;
   bool _isGenerating = false;
   bool _isSending = false;
 
@@ -37,7 +43,11 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
   bool _isLoadingLists = false;
 
   final List<_StyleOption> _styleOptions = const [
-    _StyleOption(id: 'tease', label: 'Tease', icon: Icons.local_fire_department),
+    _StyleOption(
+      id: 'tease',
+      label: 'Tease',
+      icon: Icons.local_fire_department,
+    ),
     _StyleOption(id: 'ppv', label: 'PPV', icon: Icons.attach_money),
     _StyleOption(id: 're-engage', label: 'Re-Engage', icon: Icons.favorite),
     _StyleOption(id: 'promo', label: 'Promo', icon: Icons.campaign),
@@ -86,7 +96,19 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
       final message = await repo.generateBroadcastMessage(
         creatorId: _selectedCreatorId!,
         style: _selectedStyle,
-        topic: '',
+        topic: _topicController.text.trim(),
+        language: _selectedLanguage,
+        length:
+            {
+              'Kurz': 'Short',
+              'Mittel': 'Medium',
+              'Lang': 'Long',
+            }[_selectedLength] ??
+            'Medium',
+        excludedWords: _excludedWordsController.text.trim().isEmpty
+            ? null
+            : _excludedWordsController.text.trim(),
+        useEmojis: _useEmojis,
       );
       setState(() {
         _messageController.text = message;
@@ -189,8 +211,9 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
       });
     }
 
-    final selectedCreator =
-        creators.where((c) => c.id == _selectedCreatorId).firstOrNull;
+    final selectedCreator = creators
+        .where((c) => c.id == _selectedCreatorId)
+        .firstOrNull;
 
     if (state.loading) {
       return Container(
@@ -236,59 +259,56 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
       offset: const Offset(0, 45),
       color: kCardColorDark,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      itemBuilder: (context) => creators
-          .map((creator) {
-            final isSelected = creator.id == _selectedCreatorId;
-            return PopupMenuItem<String>(
-              value: creator.id,
-              child: Row(
-                children: [
-                  Container(
-                    width: 4,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: isSelected ? kPrimaryColor : Colors.transparent,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  CircleAvatar(
-                    radius: 16,
-                    backgroundColor: kPrimaryColor.withOpacity(0.2),
-                    backgroundImage: creator.avatarUrl != null
-                        ? NetworkImage(creator.avatarUrl!)
-                        : null,
-                    child: creator.avatarUrl == null
-                        ? Text(
-                            creator.displayName.isNotEmpty
-                                ? creator.displayName[0].toUpperCase()
-                                : '?',
-                            style: const TextStyle(
-                              color: kPrimaryColor,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          )
-                        : null,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      creator.displayName,
-                      style: TextStyle(
-                        color: isSelected ? kPrimaryColor : kTextPrimary,
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  if (isSelected)
-                    const Icon(Icons.check, color: kPrimaryColor, size: 18),
-                ],
+      itemBuilder: (context) => creators.map((creator) {
+        final isSelected = creator.id == _selectedCreatorId;
+        return PopupMenuItem<String>(
+          value: creator.id,
+          child: Row(
+            children: [
+              Container(
+                width: 4,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: isSelected ? kPrimaryColor : Colors.transparent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            );
-          })
-          .toList(),
+              const SizedBox(width: 12),
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: kPrimaryColor.withOpacity(0.2),
+                backgroundImage: creator.avatarUrl != null
+                    ? NetworkImage(creator.avatarUrl!)
+                    : null,
+                child: creator.avatarUrl == null
+                    ? Text(
+                        creator.displayName.isNotEmpty
+                            ? creator.displayName[0].toUpperCase()
+                            : '?',
+                        style: const TextStyle(
+                          color: kPrimaryColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  creator.displayName,
+                  style: TextStyle(
+                    color: isSelected ? kPrimaryColor : kTextPrimary,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                  ),
+                ),
+              ),
+              if (isSelected)
+                const Icon(Icons.check, color: kPrimaryColor, size: 18),
+            ],
+          ),
+        );
+      }).toList(),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
@@ -338,7 +358,11 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
                 style: TextStyle(color: kTextSecondary, fontSize: 14),
               ),
             const SizedBox(width: 8),
-            const Icon(Icons.keyboard_arrow_down, color: kPrimaryColor, size: 20),
+            const Icon(
+              Icons.keyboard_arrow_down,
+              color: kPrimaryColor,
+              size: 20,
+            ),
           ],
         ),
       ),
@@ -353,7 +377,9 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
   }) {
     // Separate smart and custom lists
     final smartLists = _audienceLists.where((l) => l.type == 'smart').toList();
-    final customLists = _audienceLists.where((l) => l.type == 'custom').toList();
+    final customLists = _audienceLists
+        .where((l) => l.type == 'custom')
+        .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -439,9 +465,19 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
                     child: TabBarView(
                       children: [
                         // Smart Lists Tab
-                        _buildListView(smartLists, selectedIds, onToggle, isExclude),
+                        _buildListView(
+                          smartLists,
+                          selectedIds,
+                          onToggle,
+                          isExclude,
+                        ),
                         // Custom Lists Tab
-                        _buildListView(customLists, selectedIds, onToggle, isExclude),
+                        _buildListView(
+                          customLists,
+                          selectedIds,
+                          onToggle,
+                          isExclude,
+                        ),
                       ],
                     ),
                   ),
@@ -479,15 +515,12 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
           onTap: () => onToggle(list.id),
           borderRadius: BorderRadius.circular(8),
           child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 10,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: isSelected
                   ? (isExclude
-                      ? kDangerColor.withOpacity(0.1)
-                      : kPrimaryColor.withOpacity(0.1))
+                        ? kDangerColor.withOpacity(0.1)
+                        : kPrimaryColor.withOpacity(0.1))
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(8),
             ),
@@ -506,7 +539,9 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
                     list.name,
                     style: TextStyle(
                       color: isSelected ? kTextPrimary : kTextSecondary,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                      fontWeight: isSelected
+                          ? FontWeight.bold
+                          : FontWeight.w500,
                       fontSize: 13,
                     ),
                   ),
@@ -593,8 +628,9 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
                       option.label,
                       style: TextStyle(
                         color: isSelected ? kSecondaryColor : kTextSecondary,
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.w500,
+                        fontWeight: isSelected
+                            ? FontWeight.bold
+                            : FontWeight.w500,
                         fontSize: 13,
                       ),
                     ),
@@ -687,6 +723,88 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
     );
   }
 
+  void _showPromptSettingsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: kCardColorDark,
+        title: const Text(
+          'AI Einstellungen',
+          style: TextStyle(color: kTextPrimary),
+        ),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Custom Topic / Prompt
+              TextField(
+                controller: _topicController,
+                style: const TextStyle(color: kTextPrimary, fontSize: 13),
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: 'Dein Prompt (Optional)',
+                  hintText: 'z.B. Schreibe eine Story über Drachen...',
+                  labelStyle: const TextStyle(color: kTextSecondary),
+                  hintStyle: TextStyle(color: kTextSecondary.withOpacity(0.5)),
+                  prefixIcon: const Icon(
+                    Icons.psychology,
+                    color: kSecondaryColor,
+                    size: 18,
+                  ),
+                  filled: true,
+                  fillColor: kBgColorDark,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Excluded Words
+              TextField(
+                controller: _excludedWordsController,
+                style: const TextStyle(color: kTextPrimary, fontSize: 13),
+                decoration: InputDecoration(
+                  labelText: 'Verbotene Wörter (z.B. rabatt, billig)',
+                  labelStyle: const TextStyle(color: kTextSecondary),
+                  prefixIcon: const Icon(
+                    Icons.block,
+                    color: kDangerColor,
+                    size: 16,
+                  ),
+                  filled: true,
+                  fillColor: kBgColorDark,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Schließen',
+              style: TextStyle(color: kSecondaryColor),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final strings = AppLocalizations.of(context);
@@ -698,12 +816,14 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
       if (list != null) totalRecipients += list.fanCount;
     }
 
+    final size = MediaQuery.of(context).size;
+
     return Dialog(
       backgroundColor: kCardColorDark,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Container(
-        width: 900,
-        height: 750,
+        width: size.width * 0.9,
+        height: size.height * 0.85,
         padding: const EdgeInsets.all(32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -819,15 +939,7 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          '2. ${strings.writeMessage}',
-                          style: const TextStyle(
-                            color: kPrimaryColor,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
+                        // Custom Topic removed (moved to settings dialog)
 
                         // Style Selector
                         _buildStyleSelector(),
@@ -866,18 +978,135 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
                                 const Divider(color: Colors.white10),
                                 Row(
                                   children: [
+                                    // Language Selector (compact)
+                                    DropdownButtonHideUnderline(
+                                      child: DropdownButton<String>(
+                                        value: _selectedLanguage,
+                                        dropdownColor: kCardColorDark,
+                                        isDense: true,
+                                        icon: const Icon(
+                                          Icons.language,
+                                          color: kTextSecondary,
+                                          size: 16,
+                                        ),
+                                        style: const TextStyle(
+                                          color: kTextSecondary,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                        onChanged: (String? newValue) {
+                                          if (newValue != null) {
+                                            setState(
+                                              () =>
+                                                  _selectedLanguage = newValue,
+                                            );
+                                          }
+                                        },
+                                        items:
+                                            <String>[
+                                              'German',
+                                              'English',
+                                              'Spanish',
+                                              'French',
+                                              'Italian',
+                                            ].map<DropdownMenuItem<String>>((
+                                              String value,
+                                            ) {
+                                              return DropdownMenuItem<String>(
+                                                value: value,
+                                                child: Text(value),
+                                              );
+                                            }).toList(),
+                                      ),
+                                    ),
+                                    // Length Selector (compact)
+                                    DropdownButtonHideUnderline(
+                                      child: DropdownButton<String>(
+                                        value: _selectedLength,
+                                        dropdownColor: kCardColorDark,
+                                        isDense: true,
+                                        icon: const Icon(
+                                          Icons.straighten,
+                                          color: kTextSecondary,
+                                          size: 16,
+                                        ),
+                                        style: const TextStyle(
+                                          color: kTextSecondary,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                        onChanged: (String? newValue) {
+                                          if (newValue != null) {
+                                            setState(
+                                              () => _selectedLength = newValue,
+                                            );
+                                          }
+                                        },
+                                        items:
+                                            <String>[
+                                              'Kurz',
+                                              'Mittel',
+                                              'Lang',
+                                            ].map<DropdownMenuItem<String>>((
+                                              String value,
+                                            ) {
+                                              return DropdownMenuItem<String>(
+                                                value: value,
+                                                child: Text(value),
+                                              );
+                                            }).toList(),
+                                      ),
+                                    ),
+                                    // AI Settings Button
+                                    IconButton(
+                                      onPressed: _showPromptSettingsDialog,
+                                      icon: const Icon(
+                                        Icons.tune,
+                                        color: kTextSecondary,
+                                        size: 18,
+                                      ),
+                                      tooltip: 'AI Einstellungen',
+                                      constraints: const BoxConstraints(),
+                                      padding: const EdgeInsets.all(4),
+                                    ),
+                                    // Emoji Toggle
+                                    IconButton(
+                                      onPressed: () {
+                                        setState(
+                                          () => _useEmojis = !_useEmojis,
+                                        );
+                                      },
+                                      icon: Icon(
+                                        _useEmojis
+                                            ? Icons.emoji_emotions
+                                            : Icons.emoji_emotions_outlined,
+                                        color: _useEmojis
+                                            ? kWarningColor
+                                            : kTextSecondary,
+                                        size: 18,
+                                      ),
+                                      tooltip: _useEmojis
+                                          ? 'Emojis an'
+                                          : 'Emojis aus',
+                                      constraints: const BoxConstraints(),
+                                      padding: const EdgeInsets.all(4),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    // Generate Button
                                     Expanded(
                                       child: ElevatedButton.icon(
-                                        onPressed:
-                                            _isGenerating ? null : _generateMessage,
+                                        onPressed: _isGenerating
+                                            ? null
+                                            : _generateMessage,
                                         icon: _isGenerating
                                             ? const SizedBox(
                                                 width: 16,
                                                 height: 16,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                  color: kSecondaryColor,
-                                                ),
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color: kSecondaryColor,
+                                                    ),
                                               )
                                             : const Icon(
                                                 Icons.auto_awesome,
@@ -889,13 +1118,13 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
                                               : strings.generateWithGrok,
                                         ),
                                         style: ElevatedButton.styleFrom(
-                                          backgroundColor:
-                                              kSecondaryColor.withOpacity(0.2),
+                                          backgroundColor: kSecondaryColor
+                                              .withOpacity(0.2),
                                           foregroundColor: kSecondaryColor,
                                           elevation: 0,
                                           padding: const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                            vertical: 12,
+                                            horizontal: 12,
+                                            vertical: 10,
                                           ),
                                         ),
                                       ),
@@ -908,6 +1137,11 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
                         ),
 
                         const SizedBox(height: 16),
+
+                        const SizedBox(height: 16),
+
+                        // Excluded Words
+                        // Excluded words removed (moved to settings dialog)
 
                         // Suggestions
                         _buildSuggestions(),
@@ -958,7 +1192,10 @@ class _MassMessagesDialogState extends ConsumerState<MassMessagesDialog> {
                     const SizedBox(width: 12),
                     Text(
                       '${_selectedTargetLists.length} Zielgruppe(n), ${_selectedExcludeLists.length} Ausschlüsse',
-                      style: const TextStyle(color: kTextSecondary, fontSize: 13),
+                      style: const TextStyle(
+                        color: kTextSecondary,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
