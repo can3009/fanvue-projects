@@ -114,6 +114,8 @@ class AppLocalizations {
       'vips': 'VIPs',
       'selectedLists': 'Selected: %s lists',
       'dailyRevenue': 'Daily Revenue',
+      'creator': 'Creator',
+      'fan': 'Fan',
     },
     'de': {
       'settingsTitle': 'Einstellungen',
@@ -215,6 +217,8 @@ class AppLocalizations {
       'vips': 'VIPs',
       'selectedLists': 'Ausgewählt: %s Listen',
       'dailyRevenue': 'Tagesumsatz',
+      'creator': 'Creator',
+      'fan': 'Fan',
     },
   };
 
@@ -318,6 +322,8 @@ class AppLocalizations {
   String selectedLists(String count) =>
       get('selectedLists').replaceAll('%s', count);
   String get dailyRevenue => get('dailyRevenue');
+  String get creator => get('creator');
+  String get fan => get('fan');
 
   String deleteCreatorConfirm(String name) =>
       get('deleteCreatorConfirm').replaceAll('%s', name);

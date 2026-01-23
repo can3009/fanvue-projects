@@ -208,46 +208,122 @@ class DashboardScreen extends ConsumerWidget {
                           ),
                           itemBuilder: (context, index) {
                             final row = data.recentMessages[index];
+                            final direction =
+                                row['direction']?.toString() ?? 'inbound';
+                            final isOutbound =
+                                direction ==
+                                'outbound'; // Outbound = Creator sent it
                             final content =
                                 row['content'] ??
                                 row['text'] ??
                                 row['message'] ??
                                 '';
+
+                            // Parse sender info
+                            final fans = row['fans'] as Map<String, dynamic>?;
+                            final creators =
+                                row['creators'] as Map<String, dynamic>?;
+
+                            String senderName = strings.unknown;
+                            String? avatarUrl;
+
+                            if (isOutbound) {
+                              senderName =
+                                  creators?['display_name'] ?? strings.creator;
+                              avatarUrl = creators?['avatar_url'];
+                            } else {
+                              senderName =
+                                  fans?['username'] ??
+                                  fans?['display_name'] ??
+                                  strings.fan;
+                            }
+
                             return ListTile(
                               contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 20,
                                 vertical: 12,
                               ),
                               leading: CircleAvatar(
-                                backgroundColor: kSecondaryColor.withOpacity(
-                                  0.2,
-                                ),
-                                child: Text(
-                                  strings.msg,
-                                  style: const TextStyle(
-                                    color: kSecondaryColor,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
+                                radius: 20,
+                                backgroundColor: isOutbound
+                                    ? kPrimaryColor.withOpacity(0.2)
+                                    : kSecondaryColor.withOpacity(0.2),
+                                backgroundImage: avatarUrl != null
+                                    ? NetworkImage(avatarUrl)
+                                    : null,
+                                child: avatarUrl == null
+                                    ? (isOutbound
+                                          ? Text(
+                                              senderName.isNotEmpty
+                                                  ? senderName[0].toUpperCase()
+                                                  : '?',
+                                              style: const TextStyle(
+                                                color: kPrimaryColor,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            )
+                                          : const Icon(
+                                              Icons.person,
+                                              color: kSecondaryColor,
+                                              size: 20,
+                                            ))
+                                    : null,
                               ),
-                              title: Text(
-                                content.toString(),
-                                style: const TextStyle(
-                                  color: kTextPrimary,
-                                  fontSize: 14,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
+                              title: Row(
+                                children: [
+                                  if (isOutbound) ...[
+                                    Container(
+                                      margin: const EdgeInsets.only(right: 6),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: kPrimaryColor.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        senderName,
+                                        style: const TextStyle(
+                                          color: kPrimaryColor,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ] else ...[
+                                    Text(
+                                      senderName,
+                                      style: TextStyle(
+                                        color: kTextSecondary.withOpacity(0.8),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                  ],
+                                  Expanded(
+                                    child: Text(
+                                      _formatDate(row['created_at'], strings),
+                                      style: TextStyle(
+                                        color: kTextSecondary.withOpacity(0.5),
+                                        fontSize: 10,
+                                      ),
+                                      textAlign: TextAlign.end,
+                                    ),
+                                  ),
+                                ],
                               ),
                               subtitle: Padding(
-                                padding: const EdgeInsets.only(top: 6),
+                                padding: const EdgeInsets.only(top: 4),
                                 child: Text(
-                                  _formatDate(row['created_at'], strings),
-                                  style: TextStyle(
-                                    color: kTextSecondary.withOpacity(0.7),
-                                    fontSize: 11,
+                                  content.toString(),
+                                  style: const TextStyle(
+                                    color: kTextPrimary,
+                                    fontSize: 13,
                                   ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                             );

@@ -158,6 +158,7 @@ class Creator {
     required this.isActive,
     required this.settings,
     required this.fanvueCreatorId,
+    this.avatarUrl,
   });
 
   final String id;
@@ -165,6 +166,7 @@ class Creator {
   final bool isActive;
   final CreatorSettings settings;
   final String fanvueCreatorId;
+  final String? avatarUrl;
 
   factory Creator.fromMap(Map<String, dynamic> map) {
     final displayName =
@@ -180,13 +182,15 @@ class Creator {
       isActive: map['is_active'] ?? map['active'] ?? true,
       settings: CreatorSettings.fromMap(rawSettings),
       fanvueCreatorId: map['fanvue_creator_id']?.toString() ?? '',
+      avatarUrl: map['avatar_url']?.toString(),
     );
   }
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) || (other is Creator && other.id == id);
+      identical(this, other) ||
+      (other is Creator && other.id == id && other.avatarUrl == avatarUrl);
 
   @override
-  int get hashCode => id.hashCode;
+  int get hashCode => Object.hash(id, avatarUrl);
 }

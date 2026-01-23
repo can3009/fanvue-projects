@@ -40,7 +40,9 @@ class DashboardRepository {
       dev.log('Loading messages...');
       final lastMessages = await _client
           .from('messages')
-          .select('*')
+          .select(
+            '*, fans!fk_messages_fan(username, display_name), creators!messages_creator_id_fkey(display_name, avatar_url)',
+          )
           .order('created_at', ascending: false)
           .limit(5);
       dev.log('Messages loaded: ${lastMessages.length}');

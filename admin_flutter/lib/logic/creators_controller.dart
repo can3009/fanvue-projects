@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/models/creator.dart';
@@ -181,6 +182,18 @@ class CreatorsController extends StateNotifier<CreatorsState> {
     await _repository.deleteCreator(creator.id);
     state = state.copyWith(selected: null);
     await load();
+  }
+
+  Future<void> uploadAvatar(File file) async {
+    final selected = state.selected;
+    if (selected == null) return;
+    try {
+      state = state.copyWith(loading: true);
+      await _repository.uploadAvatar(selected.id, file);
+      await load();
+    } catch (e) {
+      state = state.copyWith(loading: false, error: e.toString());
+    }
   }
 }
 

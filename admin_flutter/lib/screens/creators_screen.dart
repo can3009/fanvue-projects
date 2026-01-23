@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -428,6 +430,9 @@ class CreatorsScreen extends ConsumerWidget {
                                 onDelete: () => ref
                                     .read(creatorsControllerProvider.notifier)
                                     .deleteCreator(state.selected!),
+                                onUploadAvatar: (file) => ref
+                                    .read(creatorsControllerProvider.notifier)
+                                    .uploadAvatar(file),
                               ),
                             ),
                           ),
@@ -449,6 +454,7 @@ class _CreatorDetail extends StatefulWidget {
     required this.onStartOAuth,
     required this.onUpdateIntegration,
     required this.onDelete,
+    required this.onUploadAvatar,
   });
 
   final Creator creator;
@@ -460,6 +466,7 @@ class _CreatorDetail extends StatefulWidget {
   final Future<void> Function(String clientId, String clientSecret)
   onUpdateIntegration;
   final Future<void> Function() onDelete;
+  final Future<void> Function(File file) onUploadAvatar;
 
   @override
   State<_CreatorDetail> createState() => _CreatorDetailState();
@@ -610,6 +617,22 @@ class _CreatorDetailState extends State<_CreatorDetail>
     await widget.onSave(settings, _active);
   }
 
+  Future<void> _pickAvatar() async {
+    final picker = ImagePicker();
+    try {
+      final picked = await picker.pickImage(source: ImageSource.gallery);
+      if (picked != null) {
+        await widget.onUploadAvatar(File(picked.path));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error picking image: $e')));
+      }
+    }
+  }
+
   Future<void> _showAddCredentialsDialog(BuildContext context) async {
     final clientIdController = TextEditingController();
     final clientSecretController = TextEditingController();
@@ -685,21 +708,51 @@ class _CreatorDetailState extends State<_CreatorDetail>
             children: [
               Row(
                 children: [
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundColor: kPrimaryColor.withOpacity(0.2),
-                    child: Text(
-                      widget.creator.displayName.isNotEmpty
-                          ? widget.creator.displayName[0].toUpperCase()
-                          : '?',
-                      style: const TextStyle(
-                        color: kPrimaryColor,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
+                  InkWell(
+                    onTap: _pickAvatar,
+                    borderRadius: BorderRadius.circular(50),
+                    child: Stack(
+                      children: [
+                        CircleAvatar(
+                          radius: 32,
+                          backgroundColor: kPrimaryColor.withOpacity(0.2),
+                          backgroundImage: widget.creator.avatarUrl != null
+                              ? NetworkImage(widget.creator.avatarUrl!)
+                              : null,
+                          child: widget.creator.avatarUrl == null
+                              ? Text(
+                                  widget.creator.displayName.isNotEmpty
+                                      ? widget.creator.displayName[0]
+                                            .toUpperCase()
+                                      : '?',
+                                  style: const TextStyle(
+                                    color: kPrimaryColor,
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                )
+                              : null,
+                        ),
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: kPrimaryColor,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.camera_alt,
+                              size: 14,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 20),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

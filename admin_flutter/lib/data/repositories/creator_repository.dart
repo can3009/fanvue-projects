@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -175,6 +176,30 @@ class CreatorRepository {
 
   Future<void> deleteCreator(String creatorId) async {
     await _client.from('creators').delete().eq('id', creatorId);
+  }
+
+  Future<void> uploadAvatar(String creatorId, File file) async {
+    final bytes = await file.readAsBytes();
+    final fileExt = file.path.split('.').last;
+    final fileName =
+        '$creatorId/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+
+    await _client.storage
+        .from('creator-avatars')
+        .uploadBinary(
+          fileName,
+          bytes,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    final publicUrl = _client.storage
+        .from('creator-avatars')
+        .getPublicUrl(fileName);
+
+    await _client
+        .from('creators')
+        .update({'avatar_url': publicUrl})
+        .eq('id', creatorId);
   }
 }
 
