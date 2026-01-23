@@ -63,11 +63,98 @@ class DashboardScreen extends ConsumerWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: _MetricTile(
-                        label: strings.creators,
-                        value: data.creators.toString(),
-                        icon: Icons.supervised_user_circle_rounded,
-                        color: kPrimaryColor,
+                      child: Container(
+                        height: 125,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: kCardColorDark,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.05),
+                          ),
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              kCardColorDark,
+                              kCardColorDark.withLightness(0.12),
+                            ],
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: kPrimaryColor.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: const Icon(
+                                    Icons.supervised_user_circle_rounded,
+                                    color: kPrimaryColor,
+                                    size: 20,
+                                  ),
+                                ),
+                                // Mini Add Button
+                                InkWell(
+                                  onTap: () {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            const OnboardingScreen(),
+                                      ),
+                                    );
+                                  },
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: kPrimaryColor,
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: kPrimaryColor.withOpacity(0.4),
+                                          blurRadius: 6,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: const Icon(
+                                      Icons.add,
+                                      color: Colors.white,
+                                      size: 16,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const Spacer(),
+                            Text(
+                              data.creators.toString(),
+                              style: const TextStyle(
+                                color: kTextPrimary,
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                height: 1.0,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              strings.creators,
+                              style: TextStyle(
+                                color: kTextSecondary.withOpacity(0.8),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -119,69 +206,94 @@ class DashboardScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 16),
                 Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: _cardDecoration,
-                  child: Row(
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const OnboardingScreen(),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.add_rounded, size: 20),
-                        label: Text(strings.addCreator),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: kPrimaryColor.withOpacity(0.15),
-                          foregroundColor: kPrimaryColor,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 12,
-                          ),
-                          elevation: 0,
-                          side: BorderSide(
-                            color: kPrimaryColor.withOpacity(0.3),
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                  padding: const EdgeInsets.all(
+                    0,
+                  ), // Removed padding for full bleed look
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
                       ),
-                      const SizedBox(width: 16),
-                      ElevatedButton.icon(
-                        onPressed: () {
+                    ],
+                  ),
+                  child: Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      gradient: const LinearGradient(
+                        colors: [kSecondaryColor, Color(0xFF818CF8)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: kSecondaryColor.withOpacity(0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () {
                           showDialog(
                             context: context,
                             builder: (_) => const MassMessagesDialog(),
                           );
                         },
-                        icon: const Icon(Icons.send_rounded, size: 20),
-                        label: const Text('Mass Messages'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: kSecondaryColor.withOpacity(0.15),
-                          foregroundColor: kSecondaryColor,
+                        borderRadius: BorderRadius.circular(20),
+                        child: Padding(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 12,
+                            vertical: 24,
+                            horizontal: 24,
                           ),
-                          elevation: 0,
-                          side: BorderSide(
-                            color: kSecondaryColor.withOpacity(0.3),
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w600,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: const Icon(
+                                  Icons.auto_awesome,
+                                  color: Colors.white,
+                                  size: 32,
+                                ),
+                              ),
+                              const SizedBox(width: 20),
+                              const Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Mass Messages',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Reach all fans with AI magic',
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
 
