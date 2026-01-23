@@ -1,6 +1,7 @@
 /// <reference lib="deno.ns" />
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createSupabaseServiceClient } from "../_shared/supabaseClient.ts";
+import { getValidAccessToken } from "../_shared/tokenManager.ts";
 import {
     getCustomListsRest,
     getSmartListsRest,
@@ -103,37 +104,21 @@ serve(async (req) => {
         );
     }
 
-    // 2) Token laden (Debug)
-    const { data: tokens, error: tokenError } = await supabase
-        .from("creator_oauth_tokens")
-        .select("access_token")
-        .eq("creator_id", creator_id)
-        .maybeSingle();
-
-    console.log(
-        `tokenError: ${tokenError ? JSON.stringify(tokenError) : "null"}`,
+    // 2) Token laden mit automatischer Erneuerung
+    const { token: accessToken, error: tokenError } = await getValidAccessToken(
+        supabase,
+        creator_id
     );
-    console.log(`hasToken: ${tokens?.access_token ? "yes" : "no"}`);
 
-    if (tokenError) {
+    console.log(`tokenError: ${tokenError || "null"}`);
+    console.log(`hasToken: ${accessToken ? "yes" : "no"}`);
+
+    if (tokenError || !accessToken) {
         return new Response(
             JSON.stringify({
-                error: "DBG: DB error while selecting token",
+                error: tokenError || "No access token available",
                 creator_id,
-                tokenError,
-            }),
-            {
-                status: 500,
-                headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-            },
-        );
-    }
-
-    if (!tokens?.access_token) {
-        return new Response(
-            JSON.stringify({
-                error: "DBG: No access token found in creator_oauth_tokens",
-                creator_id,
+                needsReconnect: tokenError?.includes("reconnect") || tokenError?.includes("refresh"),
             }),
             {
                 status: 401,
@@ -143,7 +128,6 @@ serve(async (req) => {
     }
 
     const creatorUserUuid = String(creator.fanvue_creator_id);
-    const accessToken = String(tokens.access_token);
 
     console.log(`fanvue_creator_id: ${creatorUserUuid}`);
 
@@ -158,22 +142,36 @@ serve(async (req) => {
 
     // 4) Smart lists
     let smartListsRaw: any[] = [];
+    let usedFallback = false;
     try {
         smartListsRaw = await getSmartListsRest(accessToken, creatorUserUuid);
         console.log(`smartListsRaw.length=${smartListsRaw.length}`);
-    } catch (_err) {
-        console.warn("smart lists api not available, fallback");
+        // Log the first smart list to see what data we're getting
+        if (smartListsRaw.length > 0) {
+            console.log(`smartListsRaw[0] FULL: ${JSON.stringify(smartListsRaw[0])}`);
+        }
+    } catch (err) {
+        console.warn("smart lists api not available, fallback. Error:", err);
     }
 
-    if (smartListsRaw.length === 0) smartListsRaw = KNOWN_SMART_LISTS;
+    if (smartListsRaw.length === 0) {
+        smartListsRaw = KNOWN_SMART_LISTS;
+        usedFallback = true;
+        console.warn("⚠️ Using KNOWN_SMART_LISTS fallback - counts will be 0");
+    }
 
-    // Map smart lists - count von API übernehmen
-    const smartLists: AudienceList[] = smartListsRaw.map((sl: any) => ({
-        id: String(sl.type),
-        name: String(sl.name),
-        fanCount: Number(sl.count ?? 0),
-        type: "smart",
-    }));
+    // Map smart lists - count direkt von API übernehmen
+    // Die /chats/lists/smart API sollte count pro Liste liefern
+    const smartLists: AudienceList[] = smartListsRaw.map((sl: any) => {
+        const count = Number(sl.count ?? 0);
+        console.log(`Smart list ${sl.type}: count=${count}`);
+        return {
+            id: String(sl.type),
+            name: String(sl.name),
+            fanCount: count,
+            type: "smart" as const,
+        };
+    });
 
     // Map custom lists - membersCount von API übernehmen
     const customLists: AudienceList[] = customListsRaw.map((cl: any) => ({
@@ -188,6 +186,10 @@ serve(async (req) => {
             smart: smartLists,
             custom: customLists,
             total: smartLists.length + customLists.length,
+            _debug: {
+                usedSmartListFallback: usedFallback,
+                smartListsFromApi: !usedFallback,
+            },
         }),
         {
             status: 200,

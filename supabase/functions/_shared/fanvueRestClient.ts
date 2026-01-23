@@ -197,6 +197,8 @@ export const getCustomListsRest = async (
 
 /**
  * Get Smart Lists (tries multiple endpoint variants)
+ * Laut Fanvue Doku: GET /creators/:creatorUserUuid/chats/lists/smart
+ * Response ist ein JSON Array mit Objekten die "type", "name", "count" enthalten
  */
 export const getSmartListsRest = async (
     accessToken: string,
@@ -204,17 +206,19 @@ export const getSmartListsRest = async (
 ): Promise<FanvueSmartList[]> => {
     const candidates: string[] = [];
 
+    // Primär: Creator-spezifischer Endpoint (laut Doku korrekt)
     if (creatorUserUuid) {
         candidates.push(`${BASE_URL}/creators/${encodeURIComponent(creatorUserUuid)}/chats/lists/smart`);
     }
 
+    // Fallback: Globaler Endpoint
     candidates.push(`${BASE_URL}/chats/lists/smart`);
 
     let lastError: unknown = null;
 
     for (const url of candidates) {
         try {
-            console.log(`📋 [REST] GET ${url}`);
+            console.log(`📋 [REST] GET Smart Lists: ${url}`);
 
             const resp = await fetch(url, {
                 method: "GET",
@@ -222,39 +226,71 @@ export const getSmartListsRest = async (
             });
 
             const raw = await resp.text();
-            console.log(`📋 [REST] Response (${resp.status}): ${raw.substring(0, 1000)}`);
+            console.log(`📋 [REST] Smart Lists Response (${resp.status}): ${raw.substring(0, 2000)}`);
 
             if (!resp.ok) {
-                // smart lists optional -> try next
                 lastError = new Error(`Smart lists failed ${resp.status}: ${raw}`);
+                console.warn(`⚠️ [REST] Smart lists endpoint returned ${resp.status}`);
                 continue;
             }
 
             const json = JSON.parse(raw);
 
-            // Possible: { data: [...] } or { items: [...] } or direct array
-            const data = Array.isArray(json) ? json : (json.data ?? json.items ?? json.result?.data?.json?.items ?? []);
-            const arr = Array.isArray(data) ? data : [];
+            // Debug: Log the response structure
+            console.log(`📋 [REST] Response type: ${Array.isArray(json) ? "Array" : typeof json}`);
+            console.log(`📋 [REST] Response keys: ${typeof json === "object" && json !== null ? Object.keys(json).join(", ") : "N/A"}`);
+
+            // Laut Fanvue Doku: Response ist direkt ein Array
+            // Aber wir unterstützen auch: { data: [...] }, { items: [...] }, { data: { items: [...] } }
+            let arr: any[] = [];
+
+            if (Array.isArray(json)) {
+                // Direktes Array (laut Doku)
+                arr = json;
+                console.log(`📋 [REST] Using direct array, length: ${arr.length}`);
+            } else if (Array.isArray(json?.data?.items)) {
+                arr = json.data.items;
+                console.log(`📋 [REST] Using json.data.items, length: ${arr.length}`);
+            } else if (Array.isArray(json?.data)) {
+                arr = json.data;
+                console.log(`📋 [REST] Using json.data, length: ${arr.length}`);
+            } else if (Array.isArray(json?.items)) {
+                arr = json.items;
+                console.log(`📋 [REST] Using json.items, length: ${arr.length}`);
+            } else if (Array.isArray(json?.result?.data?.json?.items)) {
+                arr = json.result.data.json.items;
+                console.log(`📋 [REST] Using tRPC format, length: ${arr.length}`);
+            }
+
+            if (arr.length === 0) {
+                console.warn(`⚠️ [REST] Could not extract smart lists array from response`);
+                continue;
+            }
+
+            // Debug: Log first item to see structure
+            if (arr.length > 0) {
+                console.log(`📋 [REST] First smart list item: ${JSON.stringify(arr[0])}`);
+            }
 
             const mapped: FanvueSmartList[] = arr
                 .map((x: any) => ({
-                    type: String(x.type ?? x.id ?? ""),
-                    name: String(x.name ?? ""),
+                    type: String(x.type ?? x.id ?? x.uuid ?? ""),
+                    name: String(x.name ?? x.title ?? ""),
                     description: x.description,
-                    count: Number(x.count ?? x.membersCount ?? 0),
+                    // count kann unter verschiedenen Keys sein
+                    count: Number(x.count ?? x.membersCount ?? x.memberCount ?? x.total ?? 0),
                 }))
                 .filter((x: FanvueSmartList) => x.type && x.name);
 
-            console.log(`✅ [REST] Parsed ${mapped.length} smart lists from ${url}`);
+            console.log(`✅ [REST] Parsed ${mapped.length} smart lists with counts: ${mapped.map(l => `${l.type}=${l.count}`).join(", ")}`);
             return mapped;
         } catch (e) {
             lastError = e;
-            console.warn(`⚠️ [REST] Smart lists failed for ${url}:`, e);
+            console.error(`❌ [REST] Smart lists failed for ${url}:`, e);
         }
     }
 
-    // smart lists can fallback
-    console.warn("⚠️ [REST] Smart lists failed on all variants; returning empty");
+    console.warn("⚠️ [REST] Smart lists failed on all variants; returning empty array");
     if (lastError) console.warn("Last smart list error:", lastError);
     return [];
 };
@@ -273,3 +309,71 @@ export const KNOWN_SMART_LISTS: FanvueSmartList[] = [
     { type: "FREE_TRIAL_SUBSCRIBERS", name: "Free trial subscribers", count: 0 },
     { type: "SPENT_MORE_THAN", name: "Spent more than $50", count: 0 },
 ];
+
+/**
+ * Get member count for a specific smart list
+ * Returns the total count without fetching all members
+ */
+export const getSmartListMemberCount = async (
+    accessToken: string,
+    creatorUserUuid: string,
+    smartListType: string,
+): Promise<number> => {
+    // Try the members endpoint with limit=1 to get pagination info with total count
+    const url = `${BASE_URL}/creators/${encodeURIComponent(creatorUserUuid)}/chats/lists/smart/${encodeURIComponent(smartListType)}/members?limit=1`;
+
+    try {
+        console.log(`📊 [REST] GET member count for ${smartListType}: ${url}`);
+
+        const resp = await fetch(url, {
+            method: "GET",
+            headers: authHeaders(accessToken),
+        });
+
+        const raw = await resp.text();
+        console.log(`📊 [REST] Member count response (${resp.status}): ${raw.substring(0, 500)}`);
+
+        if (!resp.ok) {
+            console.warn(`⚠️ [REST] Member count failed for ${smartListType}: ${resp.status}`);
+            return 0;
+        }
+
+        const json = JSON.parse(raw);
+
+        // Try to find total count in various response formats
+        // Common patterns: { total: N }, { pagination: { total: N } }, { meta: { total: N } }
+        const total = json.total
+            ?? json.pagination?.total
+            ?? json.meta?.total
+            ?? json.data?.total
+            ?? json.count
+            ?? null;
+
+        if (typeof total === "number") {
+            console.log(`✅ [REST] ${smartListType} has ${total} members (from total)`);
+            return total;
+        }
+
+        // If no total field, try to extract from items array length
+        // (only accurate if there's no pagination)
+        const { items } = extractItemsAndCursor(json);
+        const dataArray = Array.isArray(json?.data) ? json.data : null;
+        const allItems = items.length > 0 ? items : (dataArray ?? []);
+
+        // Check if there's more data (pagination)
+        const hasMore = json.pagination?.hasMore === true
+            || json.nextCursor != null
+            || json.data?.nextCursor != null;
+
+        if (!hasMore && allItems.length >= 0) {
+            console.log(`✅ [REST] ${smartListType} has ${allItems.length} members (from items array, no pagination)`);
+            return allItems.length;
+        }
+
+        console.warn(`⚠️ [REST] Could not determine count for ${smartListType}, has pagination but no total`);
+        return 0;
+    } catch (e) {
+        console.error(`❌ [REST] Error getting member count for ${smartListType}:`, e);
+        return 0;
+    }
+};

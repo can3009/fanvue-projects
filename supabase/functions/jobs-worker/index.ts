@@ -1,6 +1,7 @@
 /// <reference lib="deno.ns" />
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createSupabaseServiceClient } from "../_shared/supabaseClient.ts";
+import { getValidAccessToken } from "../_shared/tokenManager.ts";
 import { generateReply, ChatMessage } from "../_shared/llmClient.ts";
 import { sendFanvueMessage, markChatAsRead } from "../_shared/fanvueClient.ts";
 import { CreatorSettings, CORS_HEADERS } from "../_shared/types.ts";
@@ -169,15 +170,11 @@ serve(async (req) => {
             if (creatorError || !creator) throw new Error(`Creator not found: ${creatorError?.message}`);
             if (!creator.is_active) throw new Error("Creator is not active");
 
-            // OAuth token
-            const { data: tokens, error: tokenError } = await supabase
-                .from("creator_oauth_tokens")
-                .select("access_token")
-                .eq("creator_id", creator_id)
-                .single();
+            // OAuth token with auto-refresh
+            const { token: accessToken, error: tokenError } = await getValidAccessToken(supabase, creator_id);
 
-            if (tokenError || !tokens?.access_token) {
-                throw new Error(`No access token found for creator: ${tokenError?.message}`);
+            if (tokenError || !accessToken) {
+                throw new Error(`No access token: ${tokenError || "Token unavailable"}`);
             }
 
             // === MARK CHAT AS READ (Green checkmark ✓) ===
@@ -185,7 +182,7 @@ serve(async (req) => {
             const fanvueFanId = job.payload?.fanvue_fan_id;
             if (fanvueFanId) {
                 try {
-                    await markChatAsRead(fanvueFanId, tokens.access_token);
+                    await markChatAsRead(fanvueFanId, accessToken);
                 } catch (readError) {
                     console.warn("⚠️ Could not mark chat as read:", readError);
                     // Continue anyway - read receipts are not critical
@@ -229,7 +226,7 @@ serve(async (req) => {
                 console.log(`🎭 LLM fallback reply: ${fallbackReply.substring(0, 50)}...`);
 
                 // Send fallback to Fanvue
-                const sent = await sendFanvueMessage(fanData.fanvue_fan_id, fallbackReply, tokens.access_token);
+                const sent = await sendFanvueMessage(fanData.fanvue_fan_id, fallbackReply, accessToken);
                 console.log(`📤 Fallback sent to Fanvue: ${sent.id}`);
 
                 // Store outbound
@@ -289,7 +286,7 @@ serve(async (req) => {
             if (fanError || !fanData?.fanvue_fan_id) throw new Error(`Fan not found: ${fanError?.message}`);
 
             // Send to Fanvue (WICHTIG: sendFanvueMessage MUSS bei 401/4xx/5xx throwen, sonst wird Job completed)
-            const sent = await sendFanvueMessage(fanData.fanvue_fan_id, replyContent, tokens.access_token);
+            const sent = await sendFanvueMessage(fanData.fanvue_fan_id, replyContent, accessToken);
             console.log(`📤 Message sent to Fanvue: ${sent.id}`);
 
             // Store outbound
@@ -361,12 +358,9 @@ serve(async (req) => {
             if (cErr || !creator) throw new Error(`Creator not found: ${cErr?.message}`);
             if (!creator.is_active) throw new Error("Creator is not active");
 
-            const { data: tokens, error: tErr } = await supabase
-                .from("creator_oauth_tokens")
-                .select("access_token")
-                .eq("creator_id", creator_id)
-                .single();
-            if (tErr || !tokens?.access_token) throw new Error(`No access token found: ${tErr?.message}`);
+            // OAuth token with auto-refresh
+            const { token: followupAccessToken, error: tErr } = await getValidAccessToken(supabase, creator_id);
+            if (tErr || !followupAccessToken) throw new Error(`No access token: ${tErr || "Token unavailable"}`);
 
             const { data: fanData, error: fErr } = await supabase
                 .from("fans")
@@ -382,7 +376,7 @@ serve(async (req) => {
                 `Generate a flirty thank-you message for a $${amount} tip. Be grateful but playful.`,
             );
 
-            const sent = await sendFanvueMessage(fanData.fanvue_fan_id, thankYouMessage, tokens.access_token);
+            const sent = await sendFanvueMessage(fanData.fanvue_fan_id, thankYouMessage, followupAccessToken);
 
             await supabase.from("messages").insert({
                 creator_id,
