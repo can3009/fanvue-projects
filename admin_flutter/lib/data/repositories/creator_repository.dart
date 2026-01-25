@@ -1,25 +1,30 @@
 import 'dart:io';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/creator.dart';
 import '../supabase_client_provider.dart';
 
-/// OAuth token status for a creator
 class OAuthTokenStatus {
   const OAuthTokenStatus({
-    required this.hasToken,
-    this.expiresAt,
+    required this.hasAccessToken,
+    required this.hasRefreshToken,
     required this.isExpired,
+    this.expiresAt,
+    required this.isConnected,
   });
 
-  final bool hasToken;
-  final DateTime? expiresAt;
+  final bool hasAccessToken;
+  final bool hasRefreshToken;
   final bool isExpired;
+  final DateTime? expiresAt;
 
-  /// True if token exists and is not expired
-  bool get isValid => hasToken && !isExpired;
+  /// server truth: creator_integrations.is_connected
+  final bool isConnected;
+
+  bool get isValid =>
+      isConnected && hasAccessToken && hasRefreshToken && !isExpired;
 }
 
 class CreatorRepository {
@@ -32,89 +37,71 @@ class CreatorRepository {
         .from('creators')
         .select('*')
         .order('created_at', ascending: false);
+
     return (data as List).map((row) => Creator.fromMap(row)).toList();
   }
 
-  /// Adds a new creator with Fanvue integration credentials.
   Future<void> addCreator({
     required String displayName,
     required String fanvueCreatorId,
     required bool isActive,
-    String? fanvueClientId,
-    String? fanvueClientSecret,
-    String? fanvueWebhookSecret,
   }) async {
     final resolvedFanvueId = fanvueCreatorId.isEmpty
         ? 'manual-${DateTime.now().millisecondsSinceEpoch}'
         : fanvueCreatorId;
 
-    // Insert the creator
-    final response = await _client
-        .from('creators')
-        .insert({
-          'display_name': displayName,
-          'fanvue_creator_id': resolvedFanvueId,
-          'is_active': isActive,
-          'created_at': DateTime.now().toIso8601String(),
-        })
-        .select('id')
-        .single();
-
-    final creatorId = response['id'] as String;
-
-    // If credentials provided, create the integration entry
-    if (fanvueClientId != null &&
-        fanvueClientId.isNotEmpty &&
-        fanvueClientSecret != null &&
-        fanvueClientSecret.isNotEmpty) {
-      await _client.from('creator_integrations').insert({
-        'creator_id': creatorId,
-        'integration_type': 'fanvue',
-        'fanvue_client_id': fanvueClientId,
-        'fanvue_client_secret': fanvueClientSecret,
-        'fanvue_webhook_secret': fanvueWebhookSecret,
-        'created_at': DateTime.now().toIso8601String(),
-      });
-    }
+    await _client.from('creators').insert({
+      'display_name': displayName,
+      'fanvue_creator_id': resolvedFanvueId,
+      'is_active': isActive,
+      'created_at': DateTime.now().toIso8601String(),
+    });
   }
 
-  /// Updates Fanvue integration credentials for a creator.
-  Future<void> updateIntegration({
+  Future<void> updateCreatorSettings({
+    required String creatorId,
+    required Map<String, dynamic> settings,
+    required bool isActive,
+  }) async {
+    await _client
+        .from('creators')
+        .update({
+          'is_active': isActive,
+          'settings_json': settings,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', creatorId);
+  }
+
+  /// Start OAuth via Edge Function (stores secrets server-side)
+  Future<Uri> startFanvueOAuth({
     required String creatorId,
     required String fanvueClientId,
     required String fanvueClientSecret,
+    required String fanvueWebhookSecret,
+    List<String>? scopes,
   }) async {
-    // Check if integration exists
-    final existing = await _client
-        .from('creator_integrations')
-        .select('id')
-        .eq('creator_id', creatorId)
-        .eq('integration_type', 'fanvue')
-        .maybeSingle();
+    final res = await _client.functions.invoke(
+      'fanvue-oauth-start',
+      body: {
+        'creatorId': creatorId,
+        'fanvueClientId': fanvueClientId,
+        'fanvueClientSecret': fanvueClientSecret,
+        'fanvueWebhookSecret': fanvueWebhookSecret,
+        if (scopes != null && scopes.isNotEmpty) 'scopes': scopes,
+      },
+    );
 
-    if (existing != null) {
-      // Update existing
-      await _client
-          .from('creator_integrations')
-          .update({
-            'fanvue_client_id': fanvueClientId,
-            'fanvue_client_secret': fanvueClientSecret,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', existing['id']);
-    } else {
-      // Insert new
-      await _client.from('creator_integrations').insert({
-        'creator_id': creatorId,
-        'integration_type': 'fanvue',
-        'fanvue_client_id': fanvueClientId,
-        'fanvue_client_secret': fanvueClientSecret,
-        'created_at': DateTime.now().toIso8601String(),
-      });
+    final data = res.data as Map?;
+    final authorizeUrl = data?['authorizeUrl']?.toString();
+    if (authorizeUrl == null || authorizeUrl.isEmpty) {
+      throw Exception(
+        'fanvue-oauth-start returned no authorizeUrl. Response: ${res.data}',
+      );
     }
+    return Uri.parse(authorizeUrl);
   }
 
-  /// Returns true if creator has Fanvue integration credentials set up.
   Future<bool> hasIntegration(String creatorId) async {
     final row = await _client
         .from('creator_integrations')
@@ -125,52 +112,41 @@ class CreatorRepository {
     return row != null;
   }
 
-  Future<void> updateCreatorSettings({
-    required String creatorId,
-    required Map<String, dynamic> settings,
-    required bool isActive,
-  }) async {
-    await _client
-        .from('creators')
-        .update({'is_active': isActive, 'settings_json': settings})
-        .eq('id', creatorId);
-  }
-
-  /// Returns OAuth token status for a creator.
-  /// Returns null if no token exists.
   Future<OAuthTokenStatus?> getOAuthStatus(String creatorId) async {
+    final integration = await _client
+        .from('creator_integrations')
+        .select('is_connected')
+        .eq('creator_id', creatorId)
+        .eq('integration_type', 'fanvue')
+        .maybeSingle();
+
+    final isConnected = (integration?['is_connected'] == true);
+
     final row = await _client
         .from('creator_oauth_tokens')
-        .select('access_token, expires_at')
+        .select('access_token, refresh_token, expires_at')
         .eq('creator_id', creatorId)
         .limit(1)
         .maybeSingle();
 
-    if (row == null) return null;
+    if (row == null && integration == null) return null;
 
-    final hasToken = row['access_token'] != null;
+    final hasAccess = row?['access_token'] != null;
+    final hasRefresh = row?['refresh_token'] != null;
+
     DateTime? expiresAt;
-    if (row['expires_at'] != null) {
-      expiresAt = DateTime.tryParse(row['expires_at'].toString());
+    if (row?['expires_at'] != null) {
+      expiresAt = DateTime.tryParse(row!['expires_at'].toString());
     }
 
+    final isExpired = expiresAt != null && expiresAt.isBefore(DateTime.now());
+
     return OAuthTokenStatus(
-      hasToken: hasToken,
+      hasAccessToken: hasAccess,
+      hasRefreshToken: hasRefresh,
+      isExpired: isExpired,
       expiresAt: expiresAt,
-      isExpired: expiresAt != null && expiresAt.isBefore(DateTime.now()),
-    );
-  }
-
-  /// Legacy method for backwards compatibility
-  Future<bool> hasOAuthToken(String creatorId) async {
-    final status = await getOAuthStatus(creatorId);
-    return status?.hasToken ?? false;
-  }
-
-  Uri buildOAuthUrl(String creatorId, String supabaseUrl) {
-    final projectRef = supabaseUrl.split('//').last.split('.').first;
-    return Uri.parse(
-      'https://$projectRef.functions.supabase.co/oauth-connect?creatorId=$creatorId',
+      isConnected: isConnected,
     );
   }
 
@@ -198,7 +174,10 @@ class CreatorRepository {
 
     await _client
         .from('creators')
-        .update({'avatar_url': publicUrl})
+        .update({
+          'avatar_url': publicUrl,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
         .eq('id', creatorId);
   }
 }

@@ -2,21 +2,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-/**
- * oauth-callback
- * 
- * Purpose: Handle Fanvue OAuth callback, exchange code for tokens
- * Auth: Verify JWT OFF (Fanvue redirects here without JWT)
- * 
- * Input: Query params - code, state
- * Output: Redirect to APP_BASE_URL with success/error
- */
-
-const CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
 serve(async (req) => {
     const url = new URL(req.url);
     const code = url.searchParams.get("code");
@@ -24,34 +9,27 @@ serve(async (req) => {
     const error = url.searchParams.get("error");
     const errorDescription = url.searchParams.get("error_description");
 
-    console.log("📥 OAuth Callback received, state:", state);
-
-    // Get environment variables (global infrastructure only)
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const appBaseUrl = Deno.env.get("APP_BASE_URL") || "http://localhost:3000";
-    const fanvueTokenUrl = Deno.env.get("FANVUE_TOKEN_URL") || "https://fanvue.com/oauth/token";
+    const fanvueTokenUrl = Deno.env.get("FANVUE_TOKEN_URL") || "https://auth.fanvue.com/oauth2/token";
 
     if (!supabaseUrl || !serviceRoleKey) {
-        console.error("❌ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
-        return redirectToApp(appBaseUrl, "error", "Server configuration error");
+        return htmlResult(false, "Server configuration error", undefined);
     }
 
-    // Handle errors from Fanvue
     if (error) {
-        console.error("❌ OAuth Error from Fanvue:", error, errorDescription);
-        return redirectToApp(appBaseUrl, "error", `${error}: ${errorDescription}`);
+        return htmlResult(false, `${error}: ${errorDescription ?? ""}`, undefined);
     }
 
     if (!code || !state) {
-        console.error("❌ Missing code or state");
-        return redirectToApp(appBaseUrl, "error", "Missing authorization code or state");
+        return htmlResult(false, "Missing authorization code or state", undefined);
     }
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     try {
-        // 1. Lookup OAuth state to get creator_id and code_verifier
+        // 1) Lookup oauth state
         const { data: oauthState, error: stateError } = await supabase
             .from("oauth_states")
             .select("*")
@@ -59,15 +37,12 @@ serve(async (req) => {
             .single();
 
         if (stateError || !oauthState) {
-            console.error("❌ Invalid or expired state:", stateError);
-            return redirectToApp(appBaseUrl, "error", "Invalid or expired authorization state");
+            return htmlResult(false, "Invalid or expired authorization state", undefined);
         }
 
-        // Check expiration
         if (new Date(oauthState.expires_at) < new Date()) {
             await supabase.from("oauth_states").delete().eq("state", state);
-            console.error("❌ State expired");
-            return redirectToApp(appBaseUrl, "error", "Authorization state expired");
+            return htmlResult(false, "Authorization state expired", undefined);
         }
 
         const creatorId = oauthState.creator_id;
@@ -75,9 +50,7 @@ serve(async (req) => {
         const redirectUri = oauthState.redirect_uri;
         const scopes = oauthState.scopes;
 
-        console.log("✅ Found OAuth state for creator:", creatorId);
-
-        // 2. Get creator credentials from creator_integrations (stored per-creator)
+        // 2) Load integration creds
         const { data: integration, error: integrationError } = await supabase
             .from("creator_integrations")
             .select("fanvue_client_id, fanvue_client_secret")
@@ -85,44 +58,17 @@ serve(async (req) => {
             .eq("integration_type", "fanvue")
             .single();
 
-        if (integrationError || !integration) {
-            console.error("❌ Integration not found:", integrationError);
-            return redirectToApp(appBaseUrl, "error", "Creator integration not found", creatorId);
+        if (integrationError || !integration?.fanvue_client_id || !integration?.fanvue_client_secret) {
+            return htmlResult(false, "Creator integration not found or incomplete", creatorId);
         }
 
-        if (!integration.fanvue_client_id || !integration.fanvue_client_secret) {
-            console.error("❌ Missing client credentials in integration");
-            return redirectToApp(appBaseUrl, "error", "Missing Fanvue credentials", creatorId);
-        }
-
-        console.log("✅ Loaded creator credentials from DB");
-
-        // 3. Exchange code for tokens with PKCE
-        const tokenBody: Record<string, string> = {
-            grant_type: "authorization_code",
-            client_id: integration.fanvue_client_id,
-            client_secret: integration.fanvue_client_secret,
-            redirect_uri: redirectUri,
-            code: code,
-        };
-
-        // Add PKCE verifier
-        if (codeVerifier) {
-            tokenBody.code_verifier = codeVerifier;
-        }
-
-        console.log("📤 Exchanging code for tokens at:", fanvueTokenUrl);
-
-        // Build form body (without client credentials - those go in Basic Auth header)
+        // 3) Exchange code -> tokens (PKCE)
         const formBody = new URLSearchParams();
         formBody.append("grant_type", "authorization_code");
         formBody.append("redirect_uri", redirectUri);
         formBody.append("code", code);
-        if (codeVerifier) {
-            formBody.append("code_verifier", codeVerifier);
-        }
+        if (codeVerifier) formBody.append("code_verifier", codeVerifier);
 
-        // Fanvue requires client_secret_basic authentication (Basic Auth header)
         const basicAuth = btoa(`${integration.fanvue_client_id}:${integration.fanvue_client_secret}`);
 
         const tokenResp = await fetch(fanvueTokenUrl, {
@@ -136,156 +82,144 @@ serve(async (req) => {
 
         if (!tokenResp.ok) {
             const errorText = await tokenResp.text();
-            console.error("❌ Token exchange failed:", tokenResp.status, errorText);
-
-            // Update integration with error
             await supabase
                 .from("creator_integrations")
                 .update({
                     last_webhook_error: `Token exchange failed: ${errorText}`,
-                    updated_at: new Date().toISOString()
+                    is_connected: false,
+                    updated_at: new Date().toISOString(),
                 })
                 .eq("creator_id", creatorId)
                 .eq("integration_type", "fanvue");
 
-            return redirectToApp(appBaseUrl, "error", `Token exchange failed: ${tokenResp.status}`, creatorId);
+            return htmlResult(false, `Token exchange failed: ${tokenResp.status}`, creatorId);
         }
 
         const tokens = await tokenResp.json();
-        console.log("✅ Tokens received, expires_in:", tokens.expires_in);
 
-        // 4. Calculate expiration
-        const expiresAt = new Date(
-            Date.now() + (tokens.expires_in || 3600) * 1000
-        ).toISOString();
+        const expiresAt = new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString();
+        const hasRefresh = !!tokens.refresh_token;
 
-        // 5. Store tokens in creator_oauth_tokens
+        // 4) Store tokens
         const { error: tokenError } = await supabase
             .from("creator_oauth_tokens")
             .upsert({
                 creator_id: creatorId,
                 access_token: tokens.access_token,
-                refresh_token: tokens.refresh_token,
+                refresh_token: tokens.refresh_token ?? null,
                 expires_at: expiresAt,
                 token_type: tokens.token_type || "Bearer",
-                scope: tokens.scope || scopes?.join(" "),
+                scope: tokens.scope || (Array.isArray(scopes) ? scopes.join(" ") : null),
                 scopes: scopes,
                 updated_at: new Date().toISOString(),
             }, { onConflict: "creator_id" });
 
         if (tokenError) {
-            console.error("❌ Token storage error:", tokenError);
-            return redirectToApp(appBaseUrl, "error", "Failed to store tokens", creatorId);
+            await supabase
+                .from("creator_integrations")
+                .update({
+                    last_webhook_error: `Token storage error: ${tokenError.message}`,
+                    is_connected: false,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("creator_id", creatorId)
+                .eq("integration_type", "fanvue");
+
+            return htmlResult(false, "Failed to store tokens", creatorId);
         }
 
-        console.log("✅ Tokens stored in DB");
-
-        // 6. Update integration status
+        // 5) Update integration status based on refresh-token presence
         await supabase
             .from("creator_integrations")
             .update({
-                is_connected: true,
-                last_webhook_error: null,
+                is_connected: hasRefresh,
+                last_webhook_error: hasRefresh
+                    ? null
+                    : "No refresh_token returned. Reconnect with prompt=consent + offline_access.",
                 updated_at: new Date().toISOString(),
             })
             .eq("creator_id", creatorId)
             .eq("integration_type", "fanvue");
 
-        // 7. Clean up OAuth state
+        // 6) Cleanup oauth state
         await supabase.from("oauth_states").delete().eq("state", state);
 
-        console.log("✅ OAuth callback completed successfully for creator:", creatorId);
-
-        // 8. Redirect to app with success
-        return redirectToApp(appBaseUrl, "success", null, creatorId);
-
+        // Optional: redirect back to app base url could be implemented by you
+        // For now return success html (even if no refresh, we show warning)
+        return htmlResult(
+            hasRefresh,
+            hasRefresh ? null : "Connected but NO refresh token. Please reconnect.",
+            creatorId,
+        );
     } catch (err) {
-        console.error("❌ OAuth Callback Error:", err);
-        return redirectToApp(appBaseUrl, "error", `Server error: ${err.message}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        return htmlResult(false, `Server error: ${msg}`, undefined);
     }
 });
 
-function redirectToApp(
-    _appBaseUrl: string,
-    status: "success" | "error",
-    errorMessage: string | null,
-    creatorId?: string
-): Response {
-    // Instead of redirecting to a non-existent localhost app,
-    // we show an inline HTML page with the result
-    const isSuccess = status === "success";
-
+function htmlResult(success: boolean, errorMessage: string | null, creatorId?: string): Response {
     const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OAuth ${isSuccess ? 'Success' : 'Error'}</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            color: white;
-        }
-        .card {
-            background: rgba(255,255,255,0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 40px;
-            text-align: center;
-            max-width: 400px;
-        }
-        .icon {
-            font-size: 64px;
-            margin-bottom: 20px;
-        }
-        h1 {
-            font-size: 24px;
-            margin-bottom: 10px;
-        }
-        p {
-            color: rgba(255,255,255,0.7);
-            margin-bottom: 20px;
-        }
-        .success { color: #00ff88; }
-        .error { color: #ff6b6b; }
-        .info {
-            background: rgba(255,255,255,0.1);
-            padding: 10px 20px;
-            border-radius: 10px;
-            font-family: monospace;
-            font-size: 12px;
-            word-break: break-all;
-        }
-        .close-hint {
-            margin-top: 30px;
-            font-size: 14px;
-            color: rgba(255,255,255,0.5);
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OAuth ${success ? "Success" : "Error"}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh; display: flex; justify-content: center; align-items: center;
+      color: white;
+    }
+    .card {
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 20px;
+      padding: 40px;
+      text-align: center;
+      max-width: 480px;
+      width: calc(100% - 32px);
+    }
+    .icon { font-size: 64px; margin-bottom: 20px; }
+    h1 { font-size: 24px; margin-bottom: 10px; }
+    p { color: rgba(255,255,255,0.75); margin-bottom: 14px; }
+    .success { color: #00ff88; }
+    .error { color: #ff6b6b; }
+    .info {
+      background: rgba(255,255,255,0.1);
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+      font-size: 12px; word-break: break-all; margin-top: 8px;
+    }
+    .close-hint {
+      margin-top: 18px; font-size: 14px; color: rgba(255,255,255,0.5);
+    }
+  </style>
 </head>
 <body>
-    <div class="card">
-        <div class="icon">${isSuccess ? '✅' : '❌'}</div>
-        <h1 class="${status}">${isSuccess ? 'OAuth Connected!' : 'OAuth Failed'}</h1>
-        <p>${isSuccess
-            ? 'Your Fanvue account has been connected successfully.'
-            : (errorMessage || 'An unknown error occurred.')}</p>
-        ${creatorId ? `<div class="info">Creator ID: ${creatorId}</div>` : ''}
-        <p class="close-hint">You can close this window and return to the app.</p>
-    </div>
+  <div class="card">
+    <div class="icon">${success ? "✅" : "❌"}</div>
+    <h1 class="${success ? "success" : "error"}">${success ? "OAuth Connected!" : "OAuth Failed"}</h1>
+    <p>${success ? "You can close this window and return to the app." : (errorMessage || "Unknown error")}</p>
+    ${(!success && errorMessage) ? `<div class="info">${escapeHtml(errorMessage)}</div>` : ""}
+    ${creatorId ? `<div class="info">Creator ID: ${escapeHtml(creatorId)}</div>` : ""}
+    <p class="close-hint">You can close this window now.</p>
+  </div>
 </body>
 </html>`;
 
     return new Response(html, {
         status: 200,
-        headers: {
-            "Content-Type": "text/html; charset=utf-8",
-        },
+        headers: { "Content-Type": "text/html; charset=utf-8" },
     });
+}
+
+function escapeHtml(str: string): string {
+    return str.replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
 }

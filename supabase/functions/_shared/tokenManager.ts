@@ -7,7 +7,10 @@
 
 import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
-const FANVUE_TOKEN_URL = "https://fanvue.com/oauth/token";
+// Correct token URL (OAuth2)
+const FANVUE_TOKEN_URL = Deno.env.get("FANVUE_TOKEN_URL") ||
+    "https://auth.fanvue.com/oauth2/token";
+
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000; // 5 minutes before expiry
 
 export interface TokenInfo {
@@ -19,6 +22,8 @@ export interface TokenInfo {
 export interface RefreshResult {
     success: boolean;
     access_token?: string;
+    refresh_token?: string;
+    expires_at?: string;
     error?: string;
 }
 
@@ -28,7 +33,7 @@ export interface RefreshResult {
  */
 export async function getValidAccessToken(
     supabase: SupabaseClient,
-    creatorId: string
+    creatorId: string,
 ): Promise<{ token: string | null; error: string | null }> {
     console.log(`🔑 [TokenManager] Getting valid token for creator ${creatorId}`);
 
@@ -51,19 +56,37 @@ export async function getValidAccessToken(
     // 2. Check if token is still valid (with buffer)
     const expiresAt = new Date(tokens.expires_at).getTime();
     const now = Date.now();
-    const isExpired = now >= (expiresAt - TOKEN_EXPIRY_BUFFER_MS);
+    const isExpiredOrSoon = now >= (expiresAt - TOKEN_EXPIRY_BUFFER_MS);
 
-    if (!isExpired) {
-        console.log(`✅ [TokenManager] Token still valid, expires in ${Math.round((expiresAt - now) / 1000 / 60)} minutes`);
+    if (!isExpiredOrSoon) {
+        console.log(
+            `✅ [TokenManager] Token still valid, expires in ${Math.round((expiresAt - now) / 1000 / 60)
+            } minutes`,
+        );
         return { token: tokens.access_token, error: null };
     }
 
-    console.log(`⚠️ [TokenManager] Token expired or expiring soon, refreshing...`);
+    console.log("⚠️ [TokenManager] Token expired or expiring soon, refreshing...");
 
     // 3. Token is expired, try to refresh
     if (!tokens.refresh_token) {
         console.error("❌ [TokenManager] No refresh token available");
-        return { token: null, error: "Token expired and no refresh token available. Please reconnect OAuth." };
+        // This is a hard state: cannot auto-refresh
+        await supabase
+            .from("creator_integrations")
+            .update({
+                is_connected: false,
+                last_webhook_error:
+                    "Token expired and no refresh_token present. Please reconnect OAuth.",
+                updated_at: new Date().toISOString(),
+            })
+            .eq("creator_id", creatorId)
+            .eq("integration_type", "fanvue");
+
+        return {
+            token: null,
+            error: "Token expired and no refresh token available. Please reconnect.",
+        };
     }
 
     // 4. Get client credentials from creator_integrations
@@ -74,7 +97,8 @@ export async function getValidAccessToken(
         .eq("integration_type", "fanvue")
         .single();
 
-    if (integrationError || !integration?.fanvue_client_id || !integration?.fanvue_client_secret) {
+    if (integrationError || !integration?.fanvue_client_id ||
+        !integration?.fanvue_client_secret) {
         console.error("❌ [TokenManager] Missing client credentials:", integrationError);
         return { token: null, error: "Missing Fanvue client credentials" };
     }
@@ -83,22 +107,37 @@ export async function getValidAccessToken(
     const refreshResult = await refreshAccessToken(
         tokens.refresh_token,
         integration.fanvue_client_id,
-        integration.fanvue_client_secret
+        integration.fanvue_client_secret,
     );
 
-    if (!refreshResult.success || !refreshResult.access_token) {
+    if (!refreshResult.success || !refreshResult.access_token ||
+        !refreshResult.expires_at) {
         console.error("❌ [TokenManager] Refresh failed:", refreshResult.error);
 
-        // Mark integration as disconnected
-        await supabase
-            .from("creator_integrations")
-            .update({
-                is_connected: false,
-                last_webhook_error: `Token refresh failed: ${refreshResult.error}`,
-                updated_at: new Date().toISOString(),
-            })
-            .eq("creator_id", creatorId)
-            .eq("integration_type", "fanvue");
+        // Decide whether to hard-disconnect or keep connected (transient errors)
+        const hard = isHardRefreshError(refreshResult.error || "");
+
+        if (hard) {
+            await supabase
+                .from("creator_integrations")
+                .update({
+                    is_connected: false,
+                    last_webhook_error: `Token refresh failed (hard): ${refreshResult.error}`,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("creator_id", creatorId)
+                .eq("integration_type", "fanvue");
+        } else {
+            // transient: keep is_connected=true, just log error
+            await supabase
+                .from("creator_integrations")
+                .update({
+                    last_webhook_error: `Token refresh failed (transient): ${refreshResult.error}`,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("creator_id", creatorId)
+                .eq("integration_type", "fanvue");
+        }
 
         return { token: null, error: refreshResult.error || "Token refresh failed" };
     }
@@ -116,10 +155,23 @@ export async function getValidAccessToken(
 
     if (updateError) {
         console.error("❌ [TokenManager] Failed to store refreshed token:", updateError);
-        // Still return the new token, it's valid even if we failed to store it
+        // Still return the new token
     } else {
-        console.log(`✅ [TokenManager] Token refreshed and stored, new expiry: ${refreshResult.expires_at}`);
+        console.log(
+            `✅ [TokenManager] Token refreshed and stored, new expiry: ${refreshResult.expires_at}`,
+        );
     }
+
+    // Mark integration connected on successful refresh (optional but helpful)
+    await supabase
+        .from("creator_integrations")
+        .update({
+            is_connected: true,
+            last_webhook_error: null,
+            updated_at: new Date().toISOString(),
+        })
+        .eq("creator_id", creatorId)
+        .eq("integration_type", "fanvue");
 
     return { token: refreshResult.access_token, error: null };
 }
@@ -130,9 +182,9 @@ export async function getValidAccessToken(
 async function refreshAccessToken(
     refreshToken: string,
     clientId: string,
-    clientSecret: string
-): Promise<RefreshResult & { refresh_token?: string; expires_at?: string }> {
-    console.log(`🔄 [TokenManager] Refreshing access token...`);
+    clientSecret: string,
+): Promise<RefreshResult> {
+    console.log("🔄 [TokenManager] Refreshing access token...");
 
     try {
         // Build form body
@@ -153,7 +205,10 @@ async function refreshAccessToken(
         });
 
         const responseText = await response.text();
-        console.log(`📥 [TokenManager] Refresh response (${response.status}): ${responseText.substring(0, 200)}`);
+        console.log(
+            `📥 [TokenManager] Refresh response (${response.status}): ${responseText.substring(0, 200)
+            }`,
+        );
 
         if (!response.ok) {
             // Parse error if possible
@@ -161,7 +216,8 @@ async function refreshAccessToken(
                 const errorJson = JSON.parse(responseText);
                 return {
                     success: false,
-                    error: errorJson.error_description || errorJson.error || `HTTP ${response.status}`,
+                    error: errorJson.error_description || errorJson.error ||
+                        `HTTP ${response.status}`,
                 };
             } catch {
                 return {
@@ -175,16 +231,15 @@ async function refreshAccessToken(
 
         // Calculate new expiration
         const expiresAt = new Date(
-            Date.now() + (tokens.expires_in || 3600) * 1000
+            Date.now() + (tokens.expires_in || 3600) * 1000,
         ).toISOString();
 
         return {
             success: true,
             access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token, // May be a new refresh token
+            refresh_token: tokens.refresh_token, // might be rotated
             expires_at: expiresAt,
         };
-
     } catch (err) {
         console.error("❌ [TokenManager] Refresh error:", err);
         return {
@@ -192,4 +247,17 @@ async function refreshAccessToken(
             error: `Refresh failed: ${err instanceof Error ? err.message : String(err)}`,
         };
     }
+}
+
+/**
+ * Treat invalid_grant / revoked / unauthorized as hard reconnect required.
+ * Everything else is considered transient (timeouts, 5xx, etc.).
+ */
+function isHardRefreshError(msg: string): boolean {
+    const m = msg.toLowerCase();
+    return m.includes("invalid_grant") ||
+        m.includes("revoked") ||
+        m.includes("unauthorized") ||
+        m.includes("invalid refresh") ||
+        m.includes("refresh token") && m.includes("invalid");
 }

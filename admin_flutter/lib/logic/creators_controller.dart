@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/models/creator.dart';
@@ -10,43 +11,63 @@ class CreatorsState {
     required this.creators,
     required this.selected,
     required this.loading,
-    required this.oauthConnected,
+    required this.hasIntegration,
+    required this.oauthConnectedServer,
+    required this.hasAccessToken,
+    required this.hasRefreshToken,
     required this.oauthExpired,
     this.oauthExpiresAt,
-    required this.hasIntegration,
     required this.error,
   });
 
   final List<Creator> creators;
   final Creator? selected;
   final bool loading;
-  final bool oauthConnected;
+
+  final bool hasIntegration;
+
+  /// creator_integrations.is_connected (server truth)
+  final bool oauthConnectedServer;
+
+  final bool hasAccessToken;
+  final bool hasRefreshToken;
+
   final bool oauthExpired;
   final DateTime? oauthExpiresAt;
-  final bool hasIntegration;
+
   final String? error;
+
+  bool get needsReconnect =>
+      !hasIntegration ||
+      !oauthConnectedServer ||
+      !hasRefreshToken ||
+      oauthExpired;
 
   CreatorsState copyWith({
     List<Creator>? creators,
     Creator? selected,
     bool? loading,
-    bool? oauthConnected,
+    bool? hasIntegration,
+    bool? oauthConnectedServer,
+    bool? hasAccessToken,
+    bool? hasRefreshToken,
     bool? oauthExpired,
     DateTime? oauthExpiresAt,
     bool clearOauthExpiresAt = false,
-    bool? hasIntegration,
     String? error,
   }) {
     return CreatorsState(
       creators: creators ?? this.creators,
       selected: selected ?? this.selected,
       loading: loading ?? this.loading,
-      oauthConnected: oauthConnected ?? this.oauthConnected,
+      hasIntegration: hasIntegration ?? this.hasIntegration,
+      oauthConnectedServer: oauthConnectedServer ?? this.oauthConnectedServer,
+      hasAccessToken: hasAccessToken ?? this.hasAccessToken,
+      hasRefreshToken: hasRefreshToken ?? this.hasRefreshToken,
       oauthExpired: oauthExpired ?? this.oauthExpired,
       oauthExpiresAt: clearOauthExpiresAt
           ? null
           : (oauthExpiresAt ?? this.oauthExpiresAt),
-      hasIntegration: hasIntegration ?? this.hasIntegration,
       error: error,
     );
   }
@@ -59,9 +80,12 @@ class CreatorsController extends StateNotifier<CreatorsState> {
           creators: [],
           selected: null,
           loading: true,
-          oauthConnected: false,
-          oauthExpired: false,
           hasIntegration: false,
+          oauthConnectedServer: false,
+          hasAccessToken: false,
+          hasRefreshToken: false,
+          oauthExpired: false,
+          oauthExpiresAt: null,
           error: null,
         ),
       ) {
@@ -78,25 +102,37 @@ class CreatorsController extends StateNotifier<CreatorsState> {
       final selected =
           state.selected ?? (creators.isNotEmpty ? creators.first : null);
 
-      // Get OAuth status
-      final oauthStatus = selected == null
-          ? null
-          : await _repository.getOAuthStatus(selected.id);
-      final hasIntegration = selected == null
-          ? false
-          : await _repository.hasIntegration(selected.id);
+      if (selected == null) {
+        state = state.copyWith(
+          creators: creators,
+          selected: null,
+          loading: false,
+          hasIntegration: false,
+          oauthConnectedServer: false,
+          hasAccessToken: false,
+          hasRefreshToken: false,
+          oauthExpired: false,
+          clearOauthExpiresAt: true,
+        );
+        return;
+      }
+
+      final hasIntegration = await _repository.hasIntegration(selected.id);
+      final oauthStatus = await _repository.getOAuthStatus(selected.id);
 
       state = state.copyWith(
         creators: creators,
         selected: selected,
         loading: false,
-        oauthConnected: oauthStatus?.hasToken ?? false,
+        hasIntegration: hasIntegration,
+        oauthConnectedServer: oauthStatus?.isConnected ?? false,
+        hasAccessToken: oauthStatus?.hasAccessToken ?? false,
+        hasRefreshToken: oauthStatus?.hasRefreshToken ?? false,
         oauthExpired: oauthStatus?.isExpired ?? false,
         oauthExpiresAt: oauthStatus?.expiresAt,
-        hasIntegration: hasIntegration,
       );
-    } catch (error) {
-      state = state.copyWith(loading: false, error: error.toString());
+    } catch (e) {
+      state = state.copyWith(loading: false, error: e.toString());
     }
   }
 
@@ -104,22 +140,27 @@ class CreatorsController extends StateNotifier<CreatorsState> {
     if (creator == null) {
       state = state.copyWith(
         selected: null,
-        oauthConnected: false,
+        hasIntegration: false,
+        oauthConnectedServer: false,
+        hasAccessToken: false,
+        hasRefreshToken: false,
         oauthExpired: false,
         clearOauthExpiresAt: true,
       );
       return;
     }
 
-    final oauthStatus = await _repository.getOAuthStatus(creator.id);
     final hasIntegration = await _repository.hasIntegration(creator.id);
+    final oauthStatus = await _repository.getOAuthStatus(creator.id);
 
     state = state.copyWith(
       selected: creator,
-      oauthConnected: oauthStatus?.hasToken ?? false,
+      hasIntegration: hasIntegration,
+      oauthConnectedServer: oauthStatus?.isConnected ?? false,
+      hasAccessToken: oauthStatus?.hasAccessToken ?? false,
+      hasRefreshToken: oauthStatus?.hasRefreshToken ?? false,
       oauthExpired: oauthStatus?.isExpired ?? false,
       oauthExpiresAt: oauthStatus?.expiresAt,
-      hasIntegration: hasIntegration,
     );
   }
 
@@ -127,31 +168,11 @@ class CreatorsController extends StateNotifier<CreatorsState> {
     required String displayName,
     required String fanvueCreatorId,
     required bool isActive,
-    String? fanvueClientId,
-    String? fanvueClientSecret,
-    String? fanvueWebhookSecret,
   }) async {
     await _repository.addCreator(
       displayName: displayName,
       fanvueCreatorId: fanvueCreatorId,
       isActive: isActive,
-      fanvueClientId: fanvueClientId,
-      fanvueClientSecret: fanvueClientSecret,
-      fanvueWebhookSecret: fanvueWebhookSecret,
-    );
-    await load();
-  }
-
-  Future<void> updateIntegration({
-    required String fanvueClientId,
-    required String fanvueClientSecret,
-  }) async {
-    final selected = state.selected;
-    if (selected == null) return;
-    await _repository.updateIntegration(
-      creatorId: selected.id,
-      fanvueClientId: fanvueClientId,
-      fanvueClientSecret: fanvueClientSecret,
     );
     await load();
   }
@@ -162,6 +183,7 @@ class CreatorsController extends StateNotifier<CreatorsState> {
   }) async {
     final selected = state.selected;
     if (selected == null) return;
+
     await _repository.updateCreatorSettings(
       creatorId: selected.id,
       settings: settings.toMap(),
@@ -170,13 +192,39 @@ class CreatorsController extends StateNotifier<CreatorsState> {
     await load();
   }
 
-  Uri buildOAuthUrl() {
+  /// UI calls this. It MUST exist.
+  /// It starts OAuth for the currently selected creator and returns the authorize URL.
+  Future<Uri?> startOAuth({
+    required String fanvueClientId,
+    required String fanvueClientSecret,
+    required String fanvueWebhookSecret,
+    List<String>? scopes,
+  }) async {
     final selected = state.selected;
-    if (selected == null) {
-      return Uri();
+    if (selected == null) return null;
+
+    try {
+      state = state.copyWith(loading: true, error: null);
+
+      final url = await _repository.startFanvueOAuth(
+        creatorId: selected.id,
+        fanvueClientId: fanvueClientId,
+        fanvueClientSecret: fanvueClientSecret,
+        fanvueWebhookSecret: fanvueWebhookSecret,
+        scopes: scopes,
+      );
+
+      // IMPORTANT: After initiating OAuth, refresh status after callback completes
+      // (UI will typically return later; still keep state clean)
+      state = state.copyWith(loading: false);
+      return url;
+    } catch (e) {
+      state = state.copyWith(loading: false, error: e.toString());
+      return null;
     }
-    return _repository.buildOAuthUrl(selected.id, _supabaseUrl);
   }
+
+  String get supabaseUrl => _supabaseUrl;
 
   Future<void> deleteCreator(Creator creator) async {
     await _repository.deleteCreator(creator.id);
@@ -188,7 +236,7 @@ class CreatorsController extends StateNotifier<CreatorsState> {
     final selected = state.selected;
     if (selected == null) return;
     try {
-      state = state.copyWith(loading: true);
+      state = state.copyWith(loading: true, error: null);
       await _repository.uploadAvatar(selected.id, file);
       await load();
     } catch (e) {

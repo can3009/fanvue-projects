@@ -1,8 +1,9 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../logic/creators_controller.dart';
@@ -27,9 +28,6 @@ class CreatorsScreen extends ConsumerWidget {
     final strings = AppLocalizations.of(context);
     final displayNameController = TextEditingController();
     final fanvueIdController = TextEditingController();
-    final clientIdController = TextEditingController();
-    final clientSecretController = TextEditingController();
-    final webhookSecretController = TextEditingController();
     final activeNotifier = ValueNotifier(true);
 
     final result = await showDialog<bool>(
@@ -59,96 +57,6 @@ class CreatorsScreen extends ConsumerWidget {
                   controller: fanvueIdController,
                   label: 'Fanvue Creator ID',
                   hint: 'Optional, auto-generated if empty',
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Fanvue API Credentials',
-                  style: TextStyle(
-                    color: kPrimaryColor,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _buildStyledTextField(
-                  controller: clientIdController,
-                  label: 'Client ID *',
-                  hint: 'From Fanvue Developer Portal',
-                ),
-                const SizedBox(height: 12),
-                _buildStyledTextField(
-                  controller: clientSecretController,
-                  label: 'Client Secret *',
-                  hint: 'From Fanvue Developer Portal',
-                  obscureText: true,
-                ),
-                const SizedBox(height: 12),
-                _buildStyledTextField(
-                  controller: webhookSecretController,
-                  label: 'Webhook Signature Secret *',
-                  hint: 'For verifying incoming webhooks',
-                  obscureText: true,
-                ),
-                const SizedBox(height: 16),
-                // Webhook URL section
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: kBgColorDark,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.white.withOpacity(0.1)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Webhook URL (for Fanvue)',
-                        style: TextStyle(
-                          color: kPrimaryColor,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: SelectableText(
-                              'https://yjtzwolupyhnyfjqjsxu.supabase.co/functions/v1/fanvue-webhook',
-                              style: TextStyle(
-                                color: kTextSecondary.withOpacity(0.8),
-                                fontFamily: 'monospace',
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.copy,
-                              size: 18,
-                              color: kTextSecondary,
-                            ),
-                            tooltip: 'Copy URL',
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            onPressed: () {
-                              Clipboard.setData(
-                                const ClipboardData(
-                                  text:
-                                      'https://yjtzwolupyhnyfjqjsxu.supabase.co/functions/v1/fanvue-webhook',
-                                ),
-                              );
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Webhook URL copied!'),
-                                  duration: Duration(seconds: 2),
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
                 ),
                 const SizedBox(height: 12),
                 ValueListenableBuilder(
@@ -199,15 +107,148 @@ class CreatorsScreen extends ConsumerWidget {
           displayName: displayNameController.text.trim(),
           fanvueCreatorId: fanvueIdController.text.trim(),
           isActive: activeNotifier.value,
-          fanvueClientId: clientIdController.text.trim(),
-          fanvueClientSecret: clientSecretController.text.trim(),
-          fanvueWebhookSecret: webhookSecretController.text.trim(),
         );
   }
 
-  Future<void> _startOAuth(WidgetRef ref) async {
-    final url = ref.read(creatorsControllerProvider.notifier).buildOAuthUrl();
-    if (url.toString().isEmpty) return;
+  // ✅ FIX 1: creatorId wird übergeben (sonst ist startOAuth rot)
+  Future<void> _startOAuth(BuildContext context, WidgetRef ref) async {
+    final clientIdController = TextEditingController();
+    final clientSecretController = TextEditingController();
+    final webhookSecretController = TextEditingController();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: kCardColorDark,
+        title: const Text(
+          'Connect Fanvue (OAuth)',
+          style: TextStyle(color: kTextPrimary),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildStyledTextField(
+              controller: clientIdController,
+              label: 'Client ID *',
+              hint: 'From Fanvue Developer Portal',
+            ),
+            const SizedBox(height: 12),
+            _buildStyledTextField(
+              controller: clientSecretController,
+              label: 'Client Secret *',
+              hint: 'From Fanvue Developer Portal',
+              obscureText: true,
+            ),
+            const SizedBox(height: 12),
+            _buildStyledTextField(
+              controller: webhookSecretController,
+              label: 'Webhook Signature Secret *',
+              hint: 'For verifying incoming webhooks',
+              obscureText: true,
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: kBgColorDark,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white.withOpacity(0.1)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Webhook URL (for Fanvue)',
+                    style: TextStyle(
+                      color: kPrimaryColor,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SelectableText(
+                          'https://yjtzwolupyhnyfjqjsxu.supabase.co/functions/v1/fanvue-webhook',
+                          style: TextStyle(
+                            color: kTextSecondary.withOpacity(0.8),
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.copy,
+                          size: 18,
+                          color: kTextSecondary,
+                        ),
+                        tooltip: 'Copy URL',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () {
+                          Clipboard.setData(
+                            const ClipboardData(
+                              text:
+                                  'https://yjtzwolupyhnyfjqjsxu.supabase.co/functions/v1/fanvue-webhook',
+                            ),
+                          );
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Webhook URL copied!'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: kTextSecondary),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kPrimaryColor,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    final clientId = clientIdController.text.trim();
+    final clientSecret = clientSecretController.text.trim();
+    final webhookSecret = webhookSecretController.text.trim();
+
+    if (clientId.isEmpty || clientSecret.isEmpty || webhookSecret.isEmpty) {
+      return;
+    }
+
+    final url = await ref
+        .read(creatorsControllerProvider.notifier)
+        .startOAuth(
+          fanvueClientId: clientId,
+          fanvueClientSecret: clientSecret,
+          fanvueWebhookSecret: webhookSecret,
+        );
+
+    if (url == null) return;
+
     await launchUrl(url, mode: LaunchMode.externalApplication);
   }
 
@@ -216,7 +257,12 @@ class CreatorsScreen extends ConsumerWidget {
     final state = ref.watch(creatorsControllerProvider);
     final strings = AppLocalizations.of(context);
 
-    // Main Scaffold Background
+    // OAuth Status aus den State-Feldern
+    final oauthConnected = state.oauthConnectedServer;
+    final oauthExpired = state.oauthExpired;
+    final hasRefreshToken = state.hasRefreshToken;
+    final needsReconnect = state.needsReconnect;
+
     return Scaffold(
       backgroundColor: kBgColorDark,
       body: state.loading
@@ -376,9 +422,7 @@ class CreatorsScreen extends ConsumerWidget {
                       ),
                     ),
                   ),
-
                   const SizedBox(width: 24),
-
                   // --- Right Panel: Creator Details ---
                   Expanded(
                     child: state.selected == null
@@ -408,25 +452,17 @@ class CreatorsScreen extends ConsumerWidget {
                               borderRadius: BorderRadius.circular(24),
                               child: _CreatorDetail(
                                 creator: state.selected!,
-                                oauthConnected: state.oauthConnected,
-                                oauthExpired: state.oauthExpired,
-                                hasIntegration: state.hasIntegration,
+                                oauthConnected: oauthConnected,
+                                oauthExpired: oauthExpired,
+                                hasRefreshToken: hasRefreshToken,
+                                needsReconnect: needsReconnect,
                                 onSave: (settings, isActive) => ref
                                     .read(creatorsControllerProvider.notifier)
                                     .saveSettings(
                                       settings: settings,
                                       isActive: isActive,
                                     ),
-                                onStartOAuth: () => _startOAuth(ref),
-                                onUpdateIntegration: (clientId, clientSecret) =>
-                                    ref
-                                        .read(
-                                          creatorsControllerProvider.notifier,
-                                        )
-                                        .updateIntegration(
-                                          fanvueClientId: clientId,
-                                          fanvueClientSecret: clientSecret,
-                                        ),
+                                onStartOAuth: () => _startOAuth(context, ref),
                                 onDelete: () => ref
                                     .read(creatorsControllerProvider.notifier)
                                     .deleteCreator(state.selected!),
@@ -449,10 +485,10 @@ class _CreatorDetail extends StatefulWidget {
     required this.creator,
     required this.oauthConnected,
     required this.oauthExpired,
-    required this.hasIntegration,
+    required this.hasRefreshToken,
+    required this.needsReconnect,
     required this.onSave,
     required this.onStartOAuth,
-    required this.onUpdateIntegration,
     required this.onDelete,
     required this.onUploadAvatar,
   });
@@ -460,11 +496,10 @@ class _CreatorDetail extends StatefulWidget {
   final Creator creator;
   final bool oauthConnected;
   final bool oauthExpired;
-  final bool hasIntegration;
+  final bool hasRefreshToken;
+  final bool needsReconnect;
   final Future<void> Function(CreatorSettings settings, bool isActive) onSave;
   final VoidCallback onStartOAuth;
-  final Future<void> Function(String clientId, String clientSecret)
-  onUpdateIntegration;
   final Future<void> Function() onDelete;
   final Future<void> Function(File file) onUploadAvatar;
 
@@ -477,22 +512,18 @@ class _CreatorDetailState extends State<_CreatorDetail>
   late TabController _tabController;
   final _formKey = GlobalKey<FormState>();
 
-  // General
   bool _active = true;
 
-  // Basic Info
   final _nameController = TextEditingController();
   final _ageController = TextEditingController();
   final _locationController = TextEditingController();
   final _occupationController = TextEditingController();
 
-  // Personality
   final _traitsController = TextEditingController();
   final _speakingStyleController = TextEditingController();
   final _hobbiesController = TextEditingController();
   final _backstoryController = TextEditingController();
 
-  // Behavior sliders
   int _arrogance = 0;
   int _dominance = 0;
   int _flirtiness = 5;
@@ -500,7 +531,6 @@ class _CreatorDetailState extends State<_CreatorDetail>
   int _emojiUsage = 5;
   String _replyLength = 'medium';
 
-  // Rules
   final _doRulesController = TextEditingController();
   final _dontRulesController = TextEditingController();
   final _aiDeflectionController = TextEditingController();
@@ -633,71 +663,12 @@ class _CreatorDetailState extends State<_CreatorDetail>
     }
   }
 
-  Future<void> _showAddCredentialsDialog(BuildContext context) async {
-    final clientIdController = TextEditingController();
-    final clientSecretController = TextEditingController();
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: kCardColorDark,
-        title: const Text(
-          'Add Fanvue Credentials',
-          style: TextStyle(color: kTextPrimary),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildStyledTextField(
-              controller: clientIdController,
-              label: 'Client ID',
-              hint: 'From Fanvue Developer Portal',
-            ),
-            const SizedBox(height: 12),
-            _buildStyledTextField(
-              controller: clientSecretController,
-              label: 'Client Secret',
-              hint: 'From Fanvue Developer Portal',
-              obscureText: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: kTextSecondary),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: kPrimaryColor,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-
-    if (result == true &&
-        clientIdController.text.isNotEmpty &&
-        clientSecretController.text.isNotEmpty) {
-      await widget.onUpdateIntegration(
-        clientIdController.text.trim(),
-        clientSecretController.text.trim(),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final strings = AppLocalizations.of(context);
+
     return Column(
       children: [
-        // --- Header Section ---
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
@@ -765,73 +736,46 @@ class _CreatorDetailState extends State<_CreatorDetail>
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        // Status Chips
                         const SizedBox(height: 8),
                         Wrap(
                           spacing: 8,
                           children: [
+                            // Status-Logik:
+                            // - Rot: Kein Refresh-Token oder nicht verbunden → muss neu connecten
+                            // - Orange: Token abgelaufen aber hat Refresh-Token → wird auto-refresht
+                            // - Grün: Alles OK
                             _StatusChip(
-                              label: widget.hasIntegration
-                                  ? 'API Connected'
-                                  : 'API Missing',
-                              color: widget.hasIntegration
-                                  ? kSuccessColor
-                                  : kWarningColor,
-                              isError: !widget.hasIntegration,
-                            ),
-                            _StatusChip(
-                              label: widget.oauthExpired
-                                  ? 'OAuth Expired'
-                                  : widget.oauthConnected
-                                  ? 'OAuth Active'
-                                  : 'OAuth Missing',
-                              color: widget.oauthExpired
+                              label: !widget.oauthConnected || !widget.hasRefreshToken
+                                  ? 'OAuth Missing'
+                                  : widget.oauthExpired
+                                      ? 'Token Expired (Auto-Refresh)'
+                                      : 'OAuth Active',
+                              color: !widget.oauthConnected || !widget.hasRefreshToken
                                   ? kDangerColor
-                                  : widget.oauthConnected
-                                  ? kSuccessColor
-                                  : kWarningColor,
-                              isError:
-                                  !widget.oauthConnected || widget.oauthExpired,
+                                  : widget.oauthExpired
+                                      ? kWarningColor
+                                      : kSuccessColor,
+                              isError: !widget.oauthConnected || !widget.hasRefreshToken,
                             ),
                           ],
                         ),
                       ],
                     ),
                   ),
-                  // Actions List
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      if (!widget.hasIntegration)
-                        TextButton.icon(
-                          onPressed: () => _showAddCredentialsDialog(context),
-                          icon: const Icon(
-                            Icons.key,
-                            size: 18,
-                            color: kPrimaryColor,
-                          ),
-                          label: const Text(
-                            'Add API Keys',
-                            style: TextStyle(color: kPrimaryColor),
-                          ),
-                        ),
-                      if (widget.hasIntegration &&
-                          (!widget.oauthConnected || widget.oauthExpired))
+                      // Button nur zeigen wenn KEIN Auto-Refresh möglich
+                      // (nicht verbunden oder kein Refresh-Token)
+                      if (!widget.oauthConnected || !widget.hasRefreshToken)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 8.0),
                           child: ElevatedButton.icon(
                             onPressed: widget.onStartOAuth,
-                            icon: Icon(
-                              widget.oauthExpired ? Icons.refresh : Icons.link,
-                              size: 18,
-                            ),
-                            label: Text(
-                              widget.oauthExpired ? 'Reconnect' : 'Connect',
-                            ),
+                            icon: const Icon(Icons.link, size: 18),
+                            label: const Text('Connect'),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: widget.oauthExpired
-                                  ? kDangerColor
-                                  : kPrimaryColor,
+                              backgroundColor: kPrimaryColor,
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 16,
@@ -890,7 +834,6 @@ class _CreatorDetailState extends State<_CreatorDetail>
                 ],
               ),
               const SizedBox(height: 16),
-              // IDs Info Box
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -913,8 +856,6 @@ class _CreatorDetailState extends State<_CreatorDetail>
             ],
           ),
         ),
-
-        // --- Tabs ---
         Container(
           color: kCardColorDark,
           child: TabBar(
@@ -932,8 +873,6 @@ class _CreatorDetailState extends State<_CreatorDetail>
             ],
           ),
         ),
-
-        // --- Tab Content ---
         Expanded(
           child: Container(
             color: kCardColorDark,
@@ -951,8 +890,6 @@ class _CreatorDetailState extends State<_CreatorDetail>
             ),
           ),
         ),
-
-        // --- Footer Actions ---
         Container(
           padding: const EdgeInsets.all(20),
           decoration: const BoxDecoration(

@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../data/models/job.dart';
 import '../logic/jobs_controller.dart';
+import '../logic/jobs_worker_controller.dart';
 import '../l10n/app_localizations.dart';
 
 // --- THEME CONSTANTS (Premium Dark) ---
@@ -23,6 +24,7 @@ class JobsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(jobsControllerProvider);
+    final worker = ref.watch(jobsWorkerControllerProvider);
     final strings = AppLocalizations.of(context);
 
     // Helper decoration for cards
@@ -115,8 +117,8 @@ class JobsScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 24),
 
-            // --- Process Button (High Visibility) ---
-            state.processing
+            // --- Process Button (JobsWorkerController) ---
+            worker.running
                 ? Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(16),
@@ -125,36 +127,78 @@ class JobsScreen extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(color: kWarningColor.withOpacity(0.5)),
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    child: Column(
                       children: [
-                        const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: kWarningColor,
-                          ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: kWarningColor,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Text(
+                              worker.running
+                                  ? "Loop Running..."
+                                  : "Stopping...",
+                              style: const TextStyle(
+                                color: kWarningColor,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            TextButton.icon(
+                              onPressed: () => ref
+                                  .read(jobsWorkerControllerProvider.notifier)
+                                  .stop(),
+                              icon: const Icon(
+                                Icons.pause,
+                                color: kWarningColor,
+                              ),
+                              label: Text(
+                                strings.pause,
+                                style: const TextStyle(color: kWarningColor),
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 16),
-                        Text(
-                          strings.processing,
-                          style: const TextStyle(
-                            color: kWarningColor,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+                        if (worker.lastError != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Text(
+                              "Error: ${worker.lastError}",
+                              style: const TextStyle(
+                                color: kDangerColor,
+                                fontSize: 12,
+                              ),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 16),
-                        TextButton.icon(
-                          onPressed: () => ref
-                              .read(jobsControllerProvider.notifier)
-                              .stopProcessing(),
-                          icon: const Icon(Icons.pause, color: kWarningColor),
-                          label: Text(
-                            strings.pause,
-                            style: const TextStyle(color: kWarningColor),
-                          ),
+                        const SizedBox(height: 12),
+                        // Stats Row
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            _StatBadge(
+                              label: "Completed",
+                              count: worker.totalCompleted,
+                              color: kSuccessColor,
+                            ),
+                            _StatBadge(
+                              label: "Failed",
+                              count: worker.totalFailed,
+                              color: kDangerColor,
+                            ),
+                            _StatBadge(
+                              label: "Skipped",
+                              count: worker.totalSkipped,
+                              color: kWarningColor,
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -180,8 +224,8 @@ class JobsScreen extends ConsumerWidget {
                       color: Colors.transparent,
                       child: InkWell(
                         onTap: () => ref
-                            .read(jobsControllerProvider.notifier)
-                            .processQueue(),
+                            .read(jobsWorkerControllerProvider.notifier)
+                            .start(),
                         borderRadius: BorderRadius.circular(16),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
@@ -209,9 +253,7 @@ class JobsScreen extends ConsumerWidget {
                                     ),
                                   ),
                                   Text(
-                                    state.selectedCreatorIds.isEmpty
-                                        ? '${strings.willProcessJobsFor} ${strings.allCreators}'
-                                        : '${strings.willProcessJobsFor} ${state.selectedCreatorIds.length} creator(s)',
+                                    "Runs background worker every 2s",
                                     style: TextStyle(
                                       color: Colors.white.withOpacity(0.9),
                                       fontSize: 12,
@@ -548,6 +590,49 @@ class _JobTile extends StatelessWidget {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _StatBadge extends StatelessWidget {
+  const _StatBadge({
+    required this.label,
+    required this.count,
+    required this.color,
+  });
+
+  final String label;
+  final int count;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            count.toString(),
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
+          ),
+          Text(
+            label,
+            style: TextStyle(
+              color: kTextSecondary.withOpacity(0.8),
+              fontSize: 10,
+            ),
+          ),
+        ],
       ),
     );
   }

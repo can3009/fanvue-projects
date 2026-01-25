@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../logic/dashboard_controller.dart';
+import '../logic/jobs_worker_controller.dart';
 import 'onboarding_screen.dart';
 import 'package:admin_flutter/l10n/app_localizations.dart';
 import '../widgets/mass_messages_dialog.dart';
@@ -196,6 +197,17 @@ class DashboardScreen extends ConsumerWidget {
                   ],
                 ),
 
+                const SizedBox(height: 32),
+
+                // Jobs Worker Section
+                _buildSectionHeader(
+                  context,
+                  "Jobs Worker",
+                  icon: Icons.work_history_rounded,
+                  color: kPrimaryColor,
+                ),
+                const SizedBox(height: 16),
+                _JobsWorkerCard(),
                 const SizedBox(height: 32),
 
                 // Quick Actions
@@ -638,6 +650,173 @@ class _MetricTile extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _JobsWorkerCard extends ConsumerWidget {
+  const _JobsWorkerCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final workerState = ref.watch(jobsWorkerControllerProvider);
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: kCardColorDark,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: workerState.running
+                      ? kSuccessColor.withOpacity(0.2)
+                      : kTextSecondary.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  workerState.running
+                      ? Icons.play_arrow_rounded
+                      : Icons.stop_rounded,
+                  color: workerState.running ? kSuccessColor : kTextSecondary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    workerState.running ? "Loop Running" : "Loop Stopped",
+                    style: const TextStyle(
+                      color: kTextPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                  if (workerState.running)
+                    Text(
+                      "Polling every 2s...",
+                      style: TextStyle(
+                        color: kTextSecondary.withOpacity(0.7),
+                        fontSize: 10,
+                      ),
+                    ),
+                ],
+              ),
+              const Spacer(),
+              ElevatedButton(
+                onPressed: workerState.running
+                    ? () =>
+                          ref.read(jobsWorkerControllerProvider.notifier).stop()
+                    : () => ref
+                          .read(jobsWorkerControllerProvider.notifier)
+                          .start(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: workerState.running
+                      ? kDangerColor
+                      : kSuccessColor,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: Text(workerState.running ? "Stop" : "Start"),
+              ),
+            ],
+          ),
+          if (workerState.lastError != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(8),
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: kDangerColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: kDangerColor.withOpacity(0.2)),
+              ),
+              child: Text(
+                "Error: ${workerState.lastError}",
+                style: const TextStyle(color: kDangerColor, fontSize: 12),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _StatItem(
+                label: "Completed",
+                value: workerState.totalCompleted.toString(),
+                color: kSuccessColor,
+              ),
+              _StatItem(
+                label: "Failed",
+                value: workerState.totalFailed.toString(),
+                color: kDangerColor,
+              ),
+              _StatItem(
+                label: "Skipped",
+                value: workerState.totalSkipped.toString(),
+                color: kWarningColor,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatItem extends StatelessWidget {
+  const _StatItem({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            color: kTextSecondary.withOpacity(0.8),
+            fontSize: 10,
+          ),
+        ),
+      ],
     );
   }
 }
