@@ -238,7 +238,10 @@ export const getSmartListsRest = async (
 
             // Debug: Log the response structure
             console.log(`📋 [REST] Response type: ${Array.isArray(json) ? "Array" : typeof json}`);
-            console.log(`📋 [REST] Response keys: ${typeof json === "object" && json !== null ? Object.keys(json).join(", ") : "N/A"}`);
+            console.log(
+                `📋 [REST] Response keys: ${typeof json === "object" && json !== null ? Object.keys(json).join(", ") : "N/A"
+                }`,
+            );
 
             // Laut Fanvue Doku: Response ist direkt ein Array
             // Aber wir unterstützen auch: { data: [...] }, { items: [...] }, { data: { items: [...] } }
@@ -282,7 +285,10 @@ export const getSmartListsRest = async (
                 }))
                 .filter((x: FanvueSmartList) => x.type && x.name);
 
-            console.log(`✅ [REST] Parsed ${mapped.length} smart lists with counts: ${mapped.map(l => `${l.type}=${l.count}`).join(", ")}`);
+            console.log(
+                `✅ [REST] Parsed ${mapped.length} smart lists with counts: ${mapped.map((l) => `${l.type}=${l.count}`).join(", ")
+                }`,
+            );
             return mapped;
         } catch (e) {
             lastError = e;
@@ -320,7 +326,8 @@ export const getSmartListMemberCount = async (
     smartListType: string,
 ): Promise<number> => {
     // Try the members endpoint with limit=1 to get pagination info with total count
-    const url = `${BASE_URL}/creators/${encodeURIComponent(creatorUserUuid)}/chats/lists/smart/${encodeURIComponent(smartListType)}/members?limit=1`;
+    const url =
+        `${BASE_URL}/creators/${encodeURIComponent(creatorUserUuid)}/chats/lists/smart/${encodeURIComponent(smartListType)}/members?limit=1`;
 
     try {
         console.log(`📊 [REST] GET member count for ${smartListType}: ${url}`);
@@ -342,12 +349,12 @@ export const getSmartListMemberCount = async (
 
         // Try to find total count in various response formats
         // Common patterns: { total: N }, { pagination: { total: N } }, { meta: { total: N } }
-        const total = json.total
-            ?? json.pagination?.total
-            ?? json.meta?.total
-            ?? json.data?.total
-            ?? json.count
-            ?? null;
+        const total = json.total ??
+            json.pagination?.total ??
+            json.meta?.total ??
+            json.data?.total ??
+            json.count ??
+            null;
 
         if (typeof total === "number") {
             console.log(`✅ [REST] ${smartListType} has ${total} members (from total)`);
@@ -361,9 +368,9 @@ export const getSmartListMemberCount = async (
         const allItems = items.length > 0 ? items : (dataArray ?? []);
 
         // Check if there's more data (pagination)
-        const hasMore = json.pagination?.hasMore === true
-            || json.nextCursor != null
-            || json.data?.nextCursor != null;
+        const hasMore = json.pagination?.hasMore === true ||
+            json.nextCursor != null ||
+            json.data?.nextCursor != null;
 
         if (!hasMore && allItems.length >= 0) {
             console.log(`✅ [REST] ${smartListType} has ${allItems.length} members (from items array, no pagination)`);
@@ -376,4 +383,171 @@ export const getSmartListMemberCount = async (
         console.error(`❌ [REST] Error getting member count for ${smartListType}:`, e);
         return 0;
     }
+};
+
+/**
+ * Send Mass Message to fans via Fanvue API
+ *
+ * Laut Fanvue Doku:
+ * - Agency/Multi-Creator: POST /creators/:creatorUserUuid/chats/mass-messages
+ * - Normal Creator: POST /chats/mass-messages
+ *
+ * WICHTIG: creatorUserUuid muss eine UUID sein, NICHT ein Handle!
+ *
+ * Request Body:
+ * {
+ *   "text": "Message content",
+ *   "includedLists": {
+ *     "smartListTypes": ["ALL_CONTACTS", "SUBSCRIBERS", ...]   // some accounts
+ *     "smartListUuids": ["ALL_CONTACTS", "SUBSCRIBERS", ...]   // other accounts
+ *     "customListUuids": ["uuid1", "uuid2", ...]
+ *   },
+ *   "excludedLists": {
+ *     "smartListTypes": [...],
+ *     "smartListUuids": [...],
+ *     "customListUuids": [...]
+ *   }
+ * }
+ */
+export interface MassMessageRequest {
+    text: string;
+    includedLists: {
+        /**
+         * IMPORTANT FIX FOR YOUR ERROR (Invalid includedLists):
+         * Fanvue is inconsistent: some endpoints accept smartListTypes, others accept smartListUuids.
+         * We allow BOTH and we will send BOTH (compat) to prevent “At least one list must be provided”.
+         */
+        smartListTypes?: string[];
+        smartListUuids?: string[];
+        customListUuids?: string[];
+    };
+    excludedLists?: {
+        smartListTypes?: string[];
+        smartListUuids?: string[];
+        customListUuids?: string[];
+    };
+}
+
+export interface MassMessageResult {
+    success: boolean;
+    sent?: number;
+    failed?: number;
+    messageId?: string;
+    error?: string;
+}
+
+/**
+ * Ensures smart-list keys are compatible across Fanvue variations by mirroring values
+ * into BOTH smartListTypes and smartListUuids when one of them is present.
+ */
+function withSmartListCompatibility(req: MassMessageRequest): MassMessageRequest {
+    const smartIncluded = req.includedLists.smartListUuids ?? req.includedLists.smartListTypes;
+
+    const includedLists = {
+        ...req.includedLists,
+        ...(smartIncluded && smartIncluded.length > 0
+            ? { smartListUuids: smartIncluded, smartListTypes: smartIncluded }
+            : {}),
+    };
+
+    const smartExcluded = req.excludedLists?.smartListUuids ?? req.excludedLists?.smartListTypes;
+
+    const excludedLists = req.excludedLists
+        ? {
+            ...req.excludedLists,
+            ...(smartExcluded && smartExcluded.length > 0
+                ? { smartListUuids: smartExcluded, smartListTypes: smartExcluded }
+                : {}),
+        }
+        : undefined;
+
+    return { ...req, includedLists, excludedLists };
+}
+
+export const sendMassMessage = async (
+    accessToken: string,
+    creatorUserUuid: string,
+    request: MassMessageRequest,
+): Promise<MassMessageResult> => {
+    // Try multiple endpoint variants:
+    // 1. Agency/Multi-Creator: POST /creators/:uuid/chats/mass-messages
+    // 2. Creator's own token: POST /chats/mass-messages
+    const endpoints: string[] = [];
+
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (uuidRegex.test(creatorUserUuid)) {
+        // Agency endpoint first (if UUID is valid)
+        endpoints.push(`${BASE_URL}/creators/${encodeURIComponent(creatorUserUuid)}/chats/mass-messages`);
+    }
+
+    // Always try the direct creator endpoint as fallback
+    endpoints.push(`${BASE_URL}/chats/mass-messages`);
+
+    console.log(`📤 [REST] Will try ${endpoints.length} endpoint(s) for mass message`);
+
+    let lastError: string | null = null;
+
+    // Apply compatibility fix ONCE (minimal change, directly related to the 400 error)
+    const finalRequest = withSmartListCompatibility(request);
+
+    for (const url of endpoints) {
+        console.log(`📤 [REST] POST Mass Message: ${url}`);
+        console.log(`📤 [REST] Request body: ${JSON.stringify(finalRequest)}`);
+
+        try {
+            const resp = await fetch(url, {
+                method: "POST",
+                headers: authHeaders(accessToken),
+                body: JSON.stringify(finalRequest),
+            });
+
+            const raw = await resp.text();
+            console.log(`📤 [REST] Mass Message Response (${resp.status}): ${raw.substring(0, 1000)}`);
+
+            if (!resp.ok) {
+                // Parse error message if possible
+                let errorMsg = `Mass message failed ${resp.status}: ${raw}`;
+                try {
+                    const errJson = JSON.parse(raw);
+                    // keep it minimal: extract message if present
+                    errorMsg = errJson.message || errJson.error || errorMsg;
+                } catch (_) {
+                    // ignore parse errors
+                }
+
+                console.warn(`⚠️ [REST] Endpoint ${url} failed: ${errorMsg}`);
+                lastError = errorMsg;
+
+                // If 404 "not assigned to team member", try next endpoint
+                if (resp.status === 404 && errorMsg.includes("not assigned")) {
+                    console.log(`📤 [REST] Trying next endpoint...`);
+                    continue;
+                }
+
+                // For other errors, also try next endpoint
+                continue;
+            }
+
+            const json = JSON.parse(raw);
+            console.log(`✅ [REST] Mass message sent successfully via ${url}`);
+
+            return {
+                success: true,
+                sent: json.sent ?? json.successCount ?? json.count ?? 0,
+                failed: json.failed ?? json.failureCount ?? 0,
+                messageId: json.messageId ?? json.id ?? json.uuid,
+            };
+        } catch (e) {
+            console.error(`❌ [REST] Mass message error for ${url}:`, e);
+            lastError = String(e);
+        }
+    }
+
+    // All endpoints failed
+    console.error(`❌ [REST] All mass message endpoints failed`);
+    return {
+        success: false,
+        error: lastError || "All endpoints failed",
+    };
 };

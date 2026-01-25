@@ -4,11 +4,12 @@ import { createSupabaseServiceClient } from "../_shared/supabaseClient.ts";
 import { getValidAccessToken } from "../_shared/tokenManager.ts";
 import { generateReply, ChatMessage } from "../_shared/llmClient.ts";
 import { sendFanvueMessage, markChatAsRead } from "../_shared/fanvueClient.ts";
+import { sendMassMessage, MassMessageRequest } from "../_shared/fanvueRestClient.ts";
 import { CreatorSettings, CORS_HEADERS } from "../_shared/types.ts";
 
 type JobRow = {
     id: string;
-    job_type: "reply" | "followup" | string;
+    job_type: "reply" | "followup" | "broadcast" | string;
     status: "queued" | "processing" | "completed" | "failed" | string;
     run_at: string;
     attempts: number | null;
@@ -20,6 +21,13 @@ type JobRow = {
 
     payload: any;
 };
+
+// --- Helper: Supabase calls sollen nicht still fehlschlagen (RLS/Schema/Netzwerk) ---
+function throwIfSupabaseError(label: string, error: any) {
+    if (error) {
+        throw new Error(`${label}: ${error.message ?? String(error)}`);
+    }
+}
 
 // Generate unique media fallback response via LLM
 async function generateMediaFallbackResponse(settings: CreatorSettings): Promise<string> {
@@ -51,7 +59,6 @@ function isMediaOnlyMessage(text: string | null | undefined): boolean {
     const trimmed = text.trim();
     if (trimmed === "") return true;
     if (trimmed === "[User sent media]") return true;
-    // Also check for the system hint pattern
     if (trimmed.match(/^\[System:.*media.*\]$/i)) return true;
     return false;
 }
@@ -62,29 +69,14 @@ serve(async (req) => {
     }
 
     const supabase = createSupabaseServiceClient();
+
+    // WICHTIG: currentJobId erst setzen, NACHDEM der Job erfolgreich "geclaimed" wurde
     let currentJobId: string | null = null;
 
     try {
-        // 1) DEBUG
         const nowIso = new Date().toISOString();
-        console.log("DEBUG has SUPABASE_SERVICE_ROLE_KEY:", Boolean(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")));
-        console.log("DEBUG now:", nowIso);
 
-        const { data: sample, error: sampleErr } = await supabase
-            .from("jobs_queue")
-            .select("id,status,run_at,job_type,created_at,fan_id,creator_id")
-            .order("created_at", { ascending: false })
-            .limit(5);
-
-        if (sampleErr) {
-            console.error("DEBUG sample select error:", sampleErr);
-            return new Response(JSON.stringify({ error: sampleErr.message }), {
-                headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-                status: 500,
-            });
-        }
-
-        // 2) Fetch next due job
+        // 1) Nächsten fälligen Job lesen (nur lesen)
         const { data: job, error: fetchError } = await supabase
             .from("jobs_queue")
             .select("*")
@@ -94,25 +86,31 @@ serve(async (req) => {
             .limit(1)
             .maybeSingle<JobRow>();
 
-        if (fetchError) {
-            console.error("❌ Job fetch error:", fetchError);
-            return new Response(JSON.stringify({ error: fetchError.message }), {
-                headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-                status: 500,
-            });
-        }
+        throwIfSupabaseError("❌ Job fetch error", fetchError);
 
         if (!job) {
-            console.log("ℹ️ No jobs to process");
             return new Response(
-                JSON.stringify({
-                    message: "No jobs to process",
-                    debug: {
-                        hasServiceRoleKey: Boolean(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")),
-                        now: nowIso,
-                        sample,
-                    },
-                }),
+                JSON.stringify({ processed: false, message: "No jobs to process" }),
+                { headers: { ...CORS_HEADERS, "Content-Type": "application/json" }, status: 200 },
+            );
+        }
+
+        // 2) Atomisches Claiming: nur wenn Status noch "queued" ist -> "processing"
+        //    Wenn ein zweiter Worker parallel läuft, wird genau einer erfolgreich claimen.
+        const { data: claimed, error: claimErr } = await supabase
+            .from("jobs_queue")
+            .update({ status: "processing" })
+            .eq("id", job.id)
+            .eq("status", "queued")
+            .select("id")
+            .maybeSingle();
+
+        throwIfSupabaseError("❌ Job claim error", claimErr);
+
+        if (!claimed) {
+            // Jemand anderes hat den Job schneller geclaimed -> kein Fehler, einfach sauber beenden.
+            return new Response(
+                JSON.stringify({ processed: false, message: "Job already claimed by another worker" }),
                 { headers: { ...CORS_HEADERS, "Content-Type": "application/json" }, status: 200 },
             );
         }
@@ -120,27 +118,20 @@ serve(async (req) => {
         currentJobId = job.id;
         console.log(`🔄 Processing Job ${job.id} (type: ${job.job_type})`);
 
-        // Mark as processing
-        await supabase.from("jobs_queue").update({ status: "processing" }).eq("id", job.id);
-
-        // 3) Process
+        // ========== REPLY JOB ==========
         if (job.job_type === "reply") {
             const creator_id = job.creator_id;
             const fan_id = job.fan_id;
 
-            // fan_id MUSS gesetzt sein, sonst können wir keine Conversation/Fanvue-ID finden
             if (!fan_id) throw new Error("Job is missing fan_id (NULL). Fix jobs_queue row.");
 
             const fan_message = job.payload?.fan_message;
-            const message_id = job.payload?.message_id;
             const hasMedia = job.payload?.has_media === true;
 
-            // Allow empty fan_message if has_media is true
             if (!fan_message && !hasMedia) throw new Error("Job payload missing fan_message and no media");
 
-            // CHECK: Have we already replied to this message?
-            // Look for any outbound message to this fan after the job was created
-            const { data: recentOutbound } = await supabase
+            // CHECK: Have we already replied?
+            const { data: recentOutbound, error: recentErr } = await supabase
                 .from("messages")
                 .select("id, created_at")
                 .eq("creator_id", creator_id)
@@ -150,11 +141,18 @@ serve(async (req) => {
                 .limit(1)
                 .maybeSingle();
 
+            throwIfSupabaseError("Messages recentOutbound select failed", recentErr);
+
             if (recentOutbound) {
-                console.log("⏭️ Already replied to this conversation, skipping to prevent duplicate");
-                // Mark as completed to avoid re-processing
-                await supabase.from("jobs_queue").update({ status: "completed", last_error: "skipped:duplicate" }).eq("id", job.id);
-                return new Response(JSON.stringify({ success: true, skipped: true, reason: "already_replied" }), {
+                console.log("⏭️ Already replied to this conversation, skipping");
+                const { error: updErr } = await supabase
+                    .from("jobs_queue")
+                    .update({ status: "completed", last_error: "skipped:duplicate" })
+                    .eq("id", job.id)
+                    .eq("status", "processing");
+                throwIfSupabaseError("jobs_queue update skipped failed", updErr);
+
+                return new Response(JSON.stringify({ processed: true, skipped: true, reason: "already_replied" }), {
                     headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
                     status: 200,
                 });
@@ -167,70 +165,61 @@ serve(async (req) => {
                 .eq("id", creator_id)
                 .single();
 
-            if (creatorError || !creator) throw new Error(`Creator not found: ${creatorError?.message}`);
-            if (!creator.is_active) throw new Error("Creator is not active");
+            throwIfSupabaseError("Creator select failed", creatorError);
 
-            // OAuth token with auto-refresh
+            if (!creator?.is_active) throw new Error("Creator is not active");
+
+            // OAuth token
             const { token: accessToken, error: tokenError } = await getValidAccessToken(supabase, creator_id);
-
             if (tokenError || !accessToken) {
                 throw new Error(`No access token: ${tokenError || "Token unavailable"}`);
             }
 
-            // === MARK CHAT AS READ (Green checkmark ✓) ===
-            // Do this BEFORE generating the reply so the user sees the bot "opened" the chat
+            // Mark chat as read
             const fanvueFanId = job.payload?.fanvue_fan_id;
             if (fanvueFanId) {
                 try {
                     await markChatAsRead(fanvueFanId, accessToken);
                 } catch (readError) {
                     console.warn("⚠️ Could not mark chat as read:", readError);
-                    // Continue anyway - read receipts are not critical
                 }
             }
 
-
-
-
-            // Conversation history - Fetch LATEST 10 messages (including has_media)
+            // Conversation history
             const { data: messages, error: msgErr } = await supabase
                 .from("messages")
                 .select("direction, text, created_at, has_media")
                 .eq("creator_id", creator_id)
                 .eq("fan_id", fan_id)
-                .order("created_at", { ascending: false }) // Get NEWEST first
+                .order("created_at", { ascending: false })
                 .limit(10);
 
-            if (msgErr) throw new Error(`Messages select failed: ${msgErr.message}`);
+            throwIfSupabaseError("Messages select failed", msgErr);
 
-            // Check the LAST inbound message for media-only fallback
             const lastInbound = (messages || []).find((m: any) => m.direction === "inbound");
 
-            // FALLBACK LOGIC: Media received but no usable text/URL
-            // Conditions: has_media=true AND (text is empty OR text is placeholder)
+            // Media-only fallback
             if (lastInbound?.has_media === true && isMediaOnlyMessage(lastInbound.text)) {
-                console.log("📎 Media-only message detected, generating unique LLM response");
+                console.log("📎 Media-only message detected");
 
-                // Get Fanvue fan ID
                 const { data: fanData, error: fanError } = await supabase
                     .from("fans")
                     .select("fanvue_fan_id")
                     .eq("id", fan_id)
                     .single();
 
-                if (fanError || !fanData?.fanvue_fan_id) throw new Error(`Fan not found: ${fanError?.message}`);
+                throwIfSupabaseError("Fan select failed", fanError);
 
-                // Generate unique fallback via LLM (uses creator settings for persona)
+                if (!fanData?.fanvue_fan_id) throw new Error("Fan missing fanvue_fan_id");
+
                 const settings = (creator.settings_json || {}) as CreatorSettings;
                 const fallbackReply = await generateMediaFallbackResponse(settings);
-                console.log(`🎭 LLM fallback reply: ${fallbackReply.substring(0, 50)}...`);
+                console.log(`🎭 LLM fallback: ${fallbackReply.substring(0, 50)}...`);
 
-                // Send fallback to Fanvue
                 const sent = await sendFanvueMessage(fanData.fanvue_fan_id, fallbackReply, accessToken);
-                console.log(`📤 Fallback sent to Fanvue: ${sent.id}`);
+                console.log(`📤 Fallback sent: ${sent.id}`);
 
-                // Store outbound
-                await supabase.from("messages").insert({
+                const { error: insMsgErr } = await supabase.from("messages").insert({
                     creator_id,
                     fan_id,
                     direction: "outbound",
@@ -238,59 +227,55 @@ serve(async (req) => {
                     provider_message_id: sent.id,
                     created_at: new Date().toISOString(),
                 });
+                throwIfSupabaseError("messages insert failed", insMsgErr);
 
-                // Update conversation_state
-                await supabase.from("conversation_state").upsert(
-                    {
-                        creator_id,
-                        fan_id,
-                        last_bot_message_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString(),
-                    },
+                const { error: upsertErr } = await supabase.from("conversation_state").upsert(
+                    { creator_id, fan_id, last_bot_message_at: new Date().toISOString(), updated_at: new Date().toISOString() },
                     { onConflict: "creator_id,fan_id" },
                 );
+                throwIfSupabaseError("conversation_state upsert failed", upsertErr);
 
-                // Mark job completed and return early
-                await supabase.from("jobs_queue").update({ status: "completed", last_error: null }).eq("id", job.id);
+                const { error: doneErr } = await supabase
+                    .from("jobs_queue")
+                    .update({ status: "completed", last_error: null })
+                    .eq("id", job.id)
+                    .eq("status", "processing");
+                throwIfSupabaseError("jobs_queue complete failed", doneErr);
+
                 console.log(`✅ Job ${job.id} completed (media fallback)`);
 
-                return new Response(JSON.stringify({ success: true, jobId: job.id, jobType: job.job_type, fallback: true }), {
+                return new Response(JSON.stringify({ processed: true, jobId: job.id, type: job.job_type, fallback: true }), {
                     headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
                     status: 200,
                 });
             }
 
-            // Reverse to get chronological order (oldest to newest)
+            // Normal reply
             const history: ChatMessage[] = (messages || []).reverse().map((m: any) => ({
                 role: m.direction === "inbound" ? "user" : "assistant",
                 content: m.text,
             }));
 
-            console.log(`📝 Conversation history: ${history.length} messages`);
+            console.log(`📝 History: ${history.length} messages`);
 
-            // Get fan stage from payload (set by webhook)
             const fanStage = job.payload?.fan_stage || 'new';
-            console.log(`🎭 Fan stage: ${fanStage}`);
-
             const settings = (creator.settings_json || {}) as CreatorSettings;
             const replyContent = await generateReply(history, settings, undefined, fanStage);
-            console.log(`🤖 Generated reply: ${replyContent.substring(0, 80)}...`);
+            console.log(`🤖 Generated: ${replyContent.substring(0, 80)}...`);
 
-            // Fanvue fan id
             const { data: fanData, error: fanError } = await supabase
                 .from("fans")
                 .select("fanvue_fan_id")
                 .eq("id", fan_id)
                 .single();
 
-            if (fanError || !fanData?.fanvue_fan_id) throw new Error(`Fan not found: ${fanError?.message}`);
+            throwIfSupabaseError("Fan select failed", fanError);
+            if (!fanData?.fanvue_fan_id) throw new Error("Fan missing fanvue_fan_id");
 
-            // Send to Fanvue (WICHTIG: sendFanvueMessage MUSS bei 401/4xx/5xx throwen, sonst wird Job completed)
             const sent = await sendFanvueMessage(fanData.fanvue_fan_id, replyContent, accessToken);
-            console.log(`📤 Message sent to Fanvue: ${sent.id}`);
+            console.log(`📤 Message sent: ${sent.id}`);
 
-            // Store outbound
-            await supabase.from("messages").insert({
+            const { error: insErr } = await supabase.from("messages").insert({
                 creator_id,
                 fan_id,
                 direction: "outbound",
@@ -298,23 +283,18 @@ serve(async (req) => {
                 provider_message_id: sent.id,
                 created_at: new Date().toISOString(),
             });
+            throwIfSupabaseError("messages insert failed", insErr);
 
-            // Update conversation_state
-            await supabase.from("conversation_state").upsert(
-                {
-                    creator_id,
-                    fan_id,
-                    last_bot_message_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString(),
-                },
+            const { error: csErr } = await supabase.from("conversation_state").upsert(
+                { creator_id, fan_id, last_bot_message_at: new Date().toISOString(), updated_at: new Date().toISOString() },
                 { onConflict: "creator_id,fan_id" },
             );
+            throwIfSupabaseError("conversation_state upsert failed", csErr);
 
-            // === CHECK: Did new messages arrive during processing? ===
-            // If last_message_at on the job is newer than when we started, create a new job
-            const jobLastMessageAt = job.payload?.last_message_at || job.last_message_at;
+            // Check for new messages during processing
+            const jobLastMessageAt = job.payload?.last_message_at;
             if (jobLastMessageAt) {
-                const { data: newerMessages } = await supabase
+                const { data: newerMessages, error: newerErr } = await supabase
                     .from("messages")
                     .select("id")
                     .eq("creator_id", creator_id)
@@ -323,29 +303,29 @@ serve(async (req) => {
                     .gt("created_at", jobLastMessageAt)
                     .limit(1);
 
+                throwIfSupabaseError("newer messages select failed", newerErr);
+
                 if (newerMessages && newerMessages.length > 0) {
-                    console.log("📨 New messages arrived during processing - creating follow-up job");
-                    // Create a new queued job for the new messages
-                    const newDelay = 30 + Math.random() * 50; // 30-80 seconds
-                    await supabase.from("jobs_queue").insert({
+                    console.log("📨 New messages arrived - creating follow-up job");
+                    const newDelay = 30 + Math.random() * 50;
+
+                    const { error: qErr } = await supabase.from("jobs_queue").insert({
                         creator_id,
                         fan_id,
                         job_type: "reply",
                         status: "queued",
                         run_at: new Date(Date.now() + newDelay * 1000).toISOString(),
-                        last_message_at: new Date().toISOString(),
-                        pending_count: 0,
-                        payload: {
-                            fan_stage: job.payload?.fan_stage || 'new',
-                            fanvue_fan_id: fanData.fanvue_fan_id,
-                        },
+                        payload: { fan_stage: job.payload?.fan_stage || 'new', fanvue_fan_id: fanData.fanvue_fan_id },
                     });
+                    throwIfSupabaseError("jobs_queue insert followup failed", qErr);
                 }
             }
+
+            // ========== FOLLOWUP JOB ==========
         } else if (job.job_type === "followup") {
             const creator_id = job.creator_id;
             const fan_id = job.fan_id;
-            if (!fan_id) throw new Error("Job is missing fan_id (NULL). Fix jobs_queue row.");
+            if (!fan_id) throw new Error("Job is missing fan_id");
 
             const amount = job.payload?.amount;
             if (amount === undefined || amount === null) throw new Error("Job payload missing amount");
@@ -355,10 +335,10 @@ serve(async (req) => {
                 .select("settings_json, is_active")
                 .eq("id", creator_id)
                 .single();
-            if (cErr || !creator) throw new Error(`Creator not found: ${cErr?.message}`);
-            if (!creator.is_active) throw new Error("Creator is not active");
+            throwIfSupabaseError("Creator select failed", cErr);
 
-            // OAuth token with auto-refresh
+            if (!creator?.is_active) throw new Error("Creator is not active");
+
             const { token: followupAccessToken, error: tErr } = await getValidAccessToken(supabase, creator_id);
             if (tErr || !followupAccessToken) throw new Error(`No access token: ${tErr || "Token unavailable"}`);
 
@@ -367,7 +347,8 @@ serve(async (req) => {
                 .select("fanvue_fan_id, username")
                 .eq("id", fan_id)
                 .single();
-            if (fErr || !fanData?.fanvue_fan_id) throw new Error(`Fan not found: ${fErr?.message}`);
+            throwIfSupabaseError("Fan select failed", fErr);
+            if (!fanData?.fanvue_fan_id) throw new Error("Fan missing fanvue_fan_id");
 
             const settings = (creator.settings_json || {}) as CreatorSettings;
             const thankYouMessage = await generateReply(
@@ -378,7 +359,7 @@ serve(async (req) => {
 
             const sent = await sendFanvueMessage(fanData.fanvue_fan_id, thankYouMessage, followupAccessToken);
 
-            await supabase.from("messages").insert({
+            const { error: insErr } = await supabase.from("messages").insert({
                 creator_id,
                 fan_id,
                 direction: "outbound",
@@ -386,39 +367,155 @@ serve(async (req) => {
                 provider_message_id: sent.id ?? `tip-${Date.now()}`,
                 created_at: new Date().toISOString(),
             });
+            throwIfSupabaseError("messages insert failed", insErr);
+
+            // ========== BROADCAST JOB ==========
+        } else if (job.job_type === "broadcast") {
+            const creator_id = job.creator_id;
+            const payload = job.payload || {};
+
+            const messageText = payload.message_text;
+            const targetAudiences = payload.target_audiences || [];
+            const targetAudienceTypes = payload.target_audience_types || [];
+            const excludeAudiences = payload.exclude_audiences || [];
+            const excludeAudienceTypes = payload.exclude_audience_types || [];
+
+            if (!messageText) throw new Error("Broadcast job missing message_text");
+            if (targetAudiences.length === 0) throw new Error("Broadcast job missing target_audiences");
+
+            // Nur Warnung: verhindert stilles „verschlucken“ bei mismatch
+            if (targetAudienceTypes.length > 0 && targetAudienceTypes.length !== targetAudiences.length) {
+                console.warn("⚠️ Broadcast: target_audience_types length != target_audiences length");
+            }
+
+            console.log(`📣 Broadcast for creator ${creator_id}`);
+            console.log(`📣 Targets: ${JSON.stringify(targetAudiences)}`);
+            console.log(`📣 Types: ${JSON.stringify(targetAudienceTypes)}`);
+
+            const { data: creator, error: creatorError } = await supabase
+                .from("creators")
+                .select("fanvue_creator_id, settings_json, is_active")
+                .eq("id", creator_id)
+                .single();
+            throwIfSupabaseError("Creator select failed", creatorError);
+
+            if (!creator?.is_active) throw new Error("Creator is not active");
+            if (!creator.fanvue_creator_id) throw new Error("Creator missing fanvue_creator_id");
+
+            const creatorUserUuid = String(creator.fanvue_creator_id);
+
+            const { token: broadcastAccessToken, error: tokenErr } = await getValidAccessToken(supabase, creator_id);
+            if (tokenErr || !broadcastAccessToken) {
+                throw new Error(`No access token: ${tokenErr || "Token unavailable"}`);
+            }
+
+            const smartListTypes: string[] = [];
+            const customListUuids: string[] = [];
+            const excludeSmartListTypes: string[] = [];
+            const excludeCustomListUuids: string[] = [];
+
+            for (let i = 0; i < targetAudiences.length; i++) {
+                const audienceId = targetAudiences[i];
+                const audienceType = targetAudienceTypes[i] || 'smart';
+
+                if (audienceType === 'custom') {
+                    customListUuids.push(audienceId);
+                } else {
+                    smartListTypes.push(audienceId);
+                }
+            }
+
+            for (let i = 0; i < excludeAudiences.length; i++) {
+                const audienceId = excludeAudiences[i];
+                const audienceType = excludeAudienceTypes[i] || 'smart';
+
+                if (audienceType === 'custom') {
+                    excludeCustomListUuids.push(audienceId);
+                } else {
+                    excludeSmartListTypes.push(audienceId);
+                }
+            }
+
+            console.log(`📣 Smart lists: ${smartListTypes.join(", ") || "none"}`);
+            console.log(`📣 Custom lists: ${customListUuids.join(", ") || "none"}`);
+
+            if (smartListTypes.length === 0 && customListUuids.length === 0) {
+                throw new Error("Broadcast requires at least one target list");
+            }
+
+            const includedLists: { smartListTypes?: string[]; customListUuids?: string[] } = {};
+            if (smartListTypes.length > 0) includedLists.smartListTypes = smartListTypes;
+            if (customListUuids.length > 0) includedLists.customListUuids = customListUuids;
+
+            const massMessageRequest: MassMessageRequest = {
+                text: messageText,
+                includedLists,
+            };
+
+            if (excludeSmartListTypes.length > 0 || excludeCustomListUuids.length > 0) {
+                // Keys nur setzen, wenn wirklich vorhanden -> keine undefined-Felder
+                massMessageRequest.excludedLists = {};
+                if (excludeSmartListTypes.length > 0) massMessageRequest.excludedLists.smartListTypes = excludeSmartListTypes;
+                if (excludeCustomListUuids.length > 0) massMessageRequest.excludedLists.customListUuids = excludeCustomListUuids;
+            }
+
+            const result = await sendMassMessage(broadcastAccessToken, creatorUserUuid, massMessageRequest);
+
+            if (!result.success) {
+                throw new Error(`sendMassMessage failed: ${result.error}`);
+            }
+
+            console.log(`✅ Broadcast sent: ${result.sent} sent, ${result.failed} failed`);
+
+            const { error: updErr } = await supabase.from("jobs_queue").update({
+                payload: { ...payload, result: { sent: result.sent, failed: result.failed, messageId: result.messageId } },
+            }).eq("id", job.id);
+            throwIfSupabaseError("jobs_queue update payload result failed", updErr);
+
         } else {
-            throw new Error(`Unknown job_type: ${job.job_type}`);
+            throw new Error(`Unknown job type: ${job.job_type}`);
         }
 
-        // 4) Completed
-        await supabase.from("jobs_queue").update({ status: "completed", last_error: null }).eq("id", job.id);
-        console.log(`✅ Job ${job.id} completed successfully`);
+        // Mark completed (nur wenn noch processing)
+        const { error: doneErr } = await supabase
+            .from("jobs_queue")
+            .update({ status: "completed", last_error: null })
+            .eq("id", job.id)
+            .eq("status", "processing");
+        throwIfSupabaseError("jobs_queue complete failed", doneErr);
 
-        return new Response(JSON.stringify({ success: true, jobId: job.id, jobType: job.job_type }), {
+        console.log(`✅ Job ${job.id} completed`);
+
+        return new Response(JSON.stringify({ processed: true, jobId: job.id, type: job.job_type }), {
             headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
             status: 200,
         });
+
     } catch (error) {
-        console.error("❌ Job Processing Error:", error);
+        console.error("❌ Job Error:", error);
 
         if (currentJobId) {
-            const attemptsRes = await supabase
+            const { data: attemptsRow, error: attErr } = await supabase
                 .from("jobs_queue")
                 .select("attempts")
                 .eq("id", currentJobId)
                 .single();
 
-            const currentAttempts = attemptsRes.data?.attempts ?? 0;
+            throwIfSupabaseError("attempts select failed", attErr);
 
-            await supabase.from("jobs_queue").update({
+            const currentAttempts = attemptsRow?.attempts ?? 0;
+
+            const { error: updErr } = await supabase.from("jobs_queue").update({
                 status: currentAttempts >= 3 ? "failed" : "queued",
                 attempts: currentAttempts + 1,
                 last_error: String(error),
                 run_at: new Date(Date.now() + 60_000).toISOString(),
             }).eq("id", currentJobId);
+            // Im Error-Path nur loggen (nicht nochmal crashen)
+            if (updErr) console.error("❌ jobs_queue retry update failed:", updErr);
         }
 
-        return new Response(JSON.stringify({ error: String(error), jobId: currentJobId }), {
+        return new Response(JSON.stringify({ processed: false, error: String(error), jobId: currentJobId }), {
             headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
             status: 500,
         });

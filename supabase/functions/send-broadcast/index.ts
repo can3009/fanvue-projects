@@ -42,7 +42,7 @@ serve(async (req) => {
             .from("jobs_queue")
             .insert({
                 creator_id: creator_id,
-                type: 'broadcast',
+                job_type: 'broadcast',
                 status: 'queued',
                 payload: {
                     message_text: message,

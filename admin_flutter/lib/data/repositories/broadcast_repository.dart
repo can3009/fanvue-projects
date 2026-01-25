@@ -24,7 +24,9 @@ class AudienceList {
       id: json['id'] as String? ?? json['uuid'] as String? ?? '',
       name: json['name'] as String? ?? 'Unknown',
       fanCount: json['fanCount'] as int? ?? json['memberCount'] as int? ?? 0,
-      type: json['type'] as String? ?? listType,
+      // WICHTIG: listType ist 'smart' oder 'custom', nicht der Smart List Typ!
+      // json['type'] enthält bei Smart Lists den Typ wie "SUBSCRIBERS", nicht "smart"
+      type: listType,
     );
   }
 }

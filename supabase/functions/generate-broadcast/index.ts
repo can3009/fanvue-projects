@@ -96,7 +96,22 @@ serve(async (req) => {
             userPrompt += ` (STRICTLY NO EMOJIS)`;
         }
 
-        console.log(`🤖 Generating ${style} in ${targetLang} for ${creatorName}`);
+        // Add randomness to ensure unique responses every time
+        const randomSeed = Math.random().toString(36).substring(2, 8);
+        const randomVariation = [
+            "Be creative and unique.",
+            "Make it fresh and original.",
+            "Create something new and exciting.",
+            "Be playful and spontaneous.",
+            "Surprise me with something different.",
+            "Make it catchy and memorable.",
+            "Be flirty and fun.",
+            "Keep it authentic and engaging.",
+        ][Math.floor(Math.random() * 8)];
+
+        userPrompt += ` ${randomVariation} [seed:${randomSeed}]`;
+
+        console.log(`🤖 Generating ${style} in ${targetLang} for ${creatorName} (seed: ${randomSeed})`);
 
         // 3. Call LLM
         const resp = await fetch(`${LLM_BASE_URL}/chat/completions`, {
@@ -112,7 +127,8 @@ serve(async (req) => {
                     { role: "user", content: userPrompt }
                 ],
                 max_tokens: 300,
-                temperature: 0.7
+                temperature: 0.9,  // Higher temperature for more variety
+                top_p: 0.95,       // Allow more diverse token selection
             })
         });
 

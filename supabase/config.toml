@@ -32,3 +32,13 @@ verify_jwt = false
 # Legacy (deprecated, kept for compatibility)
 [functions.oauth-connect]
 verify_jwt = false
+
+# Broadcast/Lists functions (internal, auth via creator_id)
+[functions.send-broadcast]
+verify_jwt = false
+
+[functions.get-fanvue-lists]
+verify_jwt = false
+
+[functions.generate-broadcast]
+verify_jwt = false
